@@ -1,14 +1,14 @@
 // Just Shoot It — game loop, player, rounds, bomb and HUD.
 import * as THREE from 'three';
-import * as W from './world.js?v=4';
-import { Bot, DIFFICULTY, NAMES } from './bots.js?v=4';
-import { audio } from './audio.js?v=4';
-import { voice, LINES } from './voice.js?v=4';
-import { createViewModel } from './viewmodel.js?v=4';
-import { createFx } from './fx.js?v=4';
-import { createPickups } from './pickups.js?v=4';
-import * as TX from './textures.js?v=4';
-import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=4';
+import * as W from './world.js?v=5';
+import { Bot, DIFFICULTY, NAMES } from './bots.js?v=5';
+import { audio } from './audio.js?v=5';
+import { voice, LINES } from './voice.js?v=5';
+import { createViewModel } from './viewmodel.js?v=5';
+import { createFx } from './fx.js?v=5';
+import { createPickups } from './pickups.js?v=5';
+import * as TX from './textures.js?v=5';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=5';
 
 const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
@@ -641,7 +641,7 @@ function explode() {
       p.deathT = 0;
       game.stats.deaths++;
       killfeed('The bomb', 'You', false);
-      deathShout();
+      deathShout(true);
     }
   }
   for (const o of game.bots) {
@@ -684,7 +684,7 @@ function damagePlayer(dmg, bot, head) {
     p.planting = false;
     p.reloading = false;
     game.stats.deaths++;
-    deathShout();
+    deathShout(true);
     game.botStats[bot.name].kills++;
     killfeed(bot.name, 'You', head, bot.weapon.name);
     voice.say('died', 'urgent');
@@ -695,9 +695,9 @@ function damagePlayer(dmg, bot, head) {
   }
 }
 
-// Every death (yours, or a defender you kill): shout1, shout2 or silence, each a one-in-three chance.
-function deathShout() {
-  const roll = Math.floor(Math.random() * 3);
+// Your death always plays shout1 or shout2 (50/50). A defender you kill gets shout1, shout2 or silence, one in three each.
+function deathShout(always = false) {
+  const roll = Math.floor(Math.random() * (always ? 2 : 3));
   if (roll < 2) audio.shout(roll);
 }
 

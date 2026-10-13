@@ -1,6 +1,6 @@
 // Short-lived world effects: tracers, bullet holes, dust, blood, flashes, the bomb explosion.
 import * as THREE from 'three';
-import * as TX from './textures.js?v=4';
+import * as TX from './textures.js?v=5';
 
 const SURFACE_COLOR = { ground: 0x8a7356, wall: 0xb5ab90, crate: 0x9b7347, log: 0x6b4d30, rock: 0x8a8d80, beam: 0x6b4d30, door: 0x5c4128, roof: 0x6b4d30 };
 

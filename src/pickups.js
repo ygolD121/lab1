@@ -1,6 +1,6 @@
 // Weapons lying on the ground: dropped by dead defenders (or by the player when swapping) and picked up again.
 import * as THREE from 'three';
-import { WEAPONS } from './weapons.js?v=4';
+import { WEAPONS } from './weapons.js?v=5';
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x1d1e21, roughness: 0.5, metalness: 0.3 });
 const wood = new THREE.MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.8 });
