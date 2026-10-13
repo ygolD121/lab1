@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import * as W from './world.js';
 import { Bot, DIFFICULTY, NAMES } from './bots.js';
 import { audio } from './audio.js';
+import { voice, LINES } from './voice.js';
 import { createViewModel } from './viewmodel.js';
 import { createFx } from './fx.js';
 import * as TX from './textures.js';
@@ -30,7 +31,7 @@ const shuffle = (a) => {
 };
 
 // ---------- Settings ----------
-const settings = { difficulty: 'normal', bots: 5, sens: 1, volume: 0.7 };
+const settings = { map: 'timberline', difficulty: 'normal', bots: 5, sens: 1, volume: 0.7, voice: 'he' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('jsi-settings') || '{}')); } catch { /* storage unavailable */ }
 const saveSettings = () => {
   try { localStorage.setItem('jsi-settings', JSON.stringify(settings)); } catch { /* storage unavailable */ }
@@ -59,7 +60,9 @@ renderer.autoClear = false;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.05, 700);
 camera.rotation.order = 'YXZ';
-const world = W.buildWorld(scene);
+if (!W.MAPS[settings.map]) settings.map = 'timberline';
+W.loadMap(settings.map);
+let world = W.buildWorld(scene);
 const vm = createViewModel();
 const fx = createFx(scene);
 
@@ -332,6 +335,19 @@ const syncDiffNote = () => { $('diff-note').textContent = (ECONOMY[settings.diff
 $('opt-difficulty').addEventListener('click', syncDiffNote);
 syncDiffNote();
 bindSegment('opt-bots', 'bots', Number);
+bindSegment('opt-voice', 'voice');
+bindSegment('opt-map', 'map');
+$('opt-map').addEventListener('click', () => setMap(settings.map));
+const syncVoice = () => {
+  voice.setEnabled(settings.voice === 'he');
+  voice.setVolume(settings.volume);
+  $('voice-note').textContent = settings.voice === 'he' && !voice.available
+    ? 'No Hebrew voice on this device, so the lines will only show on screen.' : '';
+};
+$('opt-voice').addEventListener('click', syncVoice);
+syncVoice();
+setTimeout(syncVoice, 1500); // voices load asynchronously in some browsers
+window.speechSynthesis?.addEventListener?.('voiceschanged', syncVoice);
 for (const [key, fmt] of [['sens', (v) => v.toFixed(2)], ['volume', (v) => `${Math.round(v * 100)}%`]]) {
   for (const el of document.querySelectorAll(`[data-setting="${key}"]`)) {
     el.value = settings[key];
@@ -344,7 +360,10 @@ for (const [key, fmt] of [['sens', (v) => v.toFixed(2)], ['volume', (v) => `${Ma
         const oo = o.parentElement.querySelector('output');
         if (oo) oo.textContent = fmt(settings[key]);
       });
-      if (key === 'volume') audio.setVolume(settings.volume);
+      if (key === 'volume') {
+        audio.setVolume(settings.volume);
+        voice.setVolume(settings.volume);
+      }
       saveSettings();
     });
   }
@@ -370,6 +389,7 @@ function toMenu() {
   game.bots = [];
   bombMesh.visible = false;
   fx.clear();
+  voice.stop();
   setState('menu');
   if (document.pointerLockElement) document.exitPointerLock();
 }
@@ -410,7 +430,8 @@ function startRound() {
   for (const g of Object.values(p.slots)) if (g) Object.assign(g, newGun(g.id));
   p.cur = p.slots.primary ? 'primary' : 'pistol';
   p.prev = p.cur === 'primary' ? 'pistol' : 'primary';
-  const tCells = W.cellsOfType(W.T_SPAWN).filter(([, z]) => z >= 26);
+  const [ax, az, bx, bz] = W.currentMap().playerSpawn;
+  const tCells = W.cellsOfType(W.T_SPAWN).filter(([x, z]) => x >= ax && x <= bx && z >= az && z <= bz);
   const [sx, sz] = tCells[(Math.random() * tCells.length) | 0];
   p.pos.set(W.C(sx), 0, W.C(sz));
   p.vel.set(0, 0, 0);
@@ -427,9 +448,11 @@ function startRound() {
   vm.setWeapon(held().id);
   $('death-msg').classList.remove('show');
   banner(`ROUND ${game.round}`, 'Press B to buy weapons · plant the bomb at A or B, or eliminate every defender', 2.6);
+  voice.say('roundStart', 'urgent');
+  game.lowTimeSaid = false;
 }
 
-function endRound(winner, reason) {
+function endRound(winner, reason, line = winner === 'T' ? 'attackersWin' : 'defendersWin') {
   if (game.phase === 'over') return;
   game.phase = 'over';
   game.phaseT = 5;
@@ -444,14 +467,16 @@ function endRound(winner, reason) {
   }
   player.planting = false;
   closeShop();
-  banner(winner === 'T' ? 'ATTACKERS WIN' : 'DEFENDERS WIN', reason, 4.6, winner === 'T' ? 'win' : 'lose');
+  banner(LINES[line], `${winner === 'T' ? 'Attackers win' : 'Defenders win'} · ${reason}`, 4.6, winner === 'T' ? 'win' : 'lose');
   audio.jingle(winner === 'T');
+  voice.say(line, 'queue');
 }
 
 function matchOver() {
   const won = game.scoreT > game.scoreCT;
   $('mo-title').textContent = won ? 'VICTORY' : 'DEFEAT';
   $('mo-title').className = won ? 'win' : 'lose';
+  voice.say(won ? 'victory' : 'defeat', 'urgent');
   $('mo-score').textContent = `${game.scoreT} – ${game.scoreCT}`;
   const { kills, deaths, hs } = game.stats;
   $('mo-stats').innerHTML = `
@@ -529,6 +554,7 @@ function tryShoot() {
     fx.blood(end, dir);
     const killed = best.bot.takeDamage(dmg, p.pos);
     showHitmarker(head, killed);
+    if (killed && head) voice.say('headshot');
     audio.hit(head);
     if (killed) onBotKilled(best.bot, head, w);
   } else if (hit.t < 250) fx.impact(end, hit.n, hit.what);
@@ -557,7 +583,8 @@ function plantBomb(siteType) {
   bombMesh.rotation.y = p.yaw;
   bombMesh.visible = true;
   audio.armed();
-  banner('BOMB HAS BEEN PLANTED', `Bombsite ${b.site}: defend it for ${BOMB_TIME} seconds`, 2.6, 'warn');
+  banner(LINES.planted, `Bomb planted at ${b.site}: defend it for ${BOMB_TIME} seconds`, 2.6, 'warn');
+  voice.say('planted', 'urgent');
   for (const o of game.bots) {
     if (o.alive && o.state !== 'engage') {
       o.state = 'toBomb';
@@ -572,6 +599,7 @@ function explode() {
   bombMesh.visible = false;
   fx.explosion(b.pos);
   audio.explosion(1);
+  voice.say('exploded', 'urgent');
   game.shake = 1.4;
   const p = player;
   const d = p.pos.distanceTo(b.pos);
@@ -627,6 +655,7 @@ function damagePlayer(dmg, bot, head) {
     game.stats.deaths++;
     game.botStats[bot.name].kills++;
     killfeed(bot.name, 'You', head, bot.weapon.name);
+    voice.say('died', 'urgent');
     const dm = $('death-msg');
     dm.innerHTML = `Killed by <b>${bot.name}</b> · ${bot.weapon.name}${head ? ' · headshot' : ''}<small>${bot.hp} HP left · you lose your guns and armor</small>`;
     dm.classList.add('show');
@@ -665,7 +694,7 @@ function bombDefused(bot) {
   game.bomb.planted = false;
   game.bomb.defuser = null;
   bombLedMat.emissiveIntensity = 0;
-  endRound('CT', `${bot.name} defused the bomb`);
+  endRound('CT', `${bot.name} defused the bomb`, 'defused');
 }
 
 function nearMiss(muzzle, dir) {
@@ -755,7 +784,7 @@ const radar = $('radar'), rctx = radar.getContext('2d');
 const RS = radar.width, rscale = RS / (W.GW * W.CELL);
 const radarBg = document.createElement('canvas');
 radarBg.width = radarBg.height = RS;
-{
+function drawRadarBg() {
   const g = radarBg.getContext('2d');
   g.fillStyle = '#16200f';
   g.fillRect(0, 0, RS, RS);
@@ -777,9 +806,26 @@ radarBg.width = radarBg.height = RS;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillStyle = '#ffb347';
-  g.fillText('A', 24.5 * cs, 4.5 * cs);
-  g.fillText('B', 4.5 * cs, 4.5 * cs);
+  const { A, B } = W.currentMap().radarLabels;
+  g.fillText('A', A[0] * cs, A[1] * cs);
+  g.fillText('B', B[0] * cs, B[1] * cs);
 }
+drawRadarBg();
+
+// Swaps in another map: rebuilds the grid, the 3D world, the radar and the map name in the UI.
+function setMap(id) {
+  if (W.currentMap().id !== id) {
+    world.dispose();
+    W.loadMap(id);
+    world = W.buildWorld(scene);
+    drawRadarBg();
+  }
+  const m = W.currentMap();
+  $('mapname-title').textContent = m.title;
+  $('mapname-blurb').textContent = m.blurb;
+  $('sb-title').textContent = `JUST SHOOT IT · ${m.title}`;
+}
+setMap(settings.map);
 
 function drawRadar() {
   rctx.drawImage(radarBg, 0, 0);
@@ -1050,6 +1096,10 @@ function update(dt) {
   } else if (game.phase === 'live') {
     if (!game.bomb.planted) {
       game.roundTime -= dt;
+      if (game.roundTime < 15 && !game.lowTimeSaid) {
+        game.lowTimeSaid = true;
+        voice.say('lowTime');
+      }
       if (game.roundTime <= 0) {
         game.roundTime = 0;
         endRound('CT', 'Time ran out before the bomb was planted');

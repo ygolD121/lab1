@@ -4,7 +4,12 @@ A tactical first-person shooter that runs entirely in the browser: no backend, n
 
 **Play:** https://ygold121.github.io/lab1/
 
-You attack **de_timberline**, a Dust 2–style layout overgrown by forest. You start with a Glock-19 and carry the bomb. Plant it at **A** or **B** and keep it alive for 40 seconds, or take out every defender. The defender bots also carry Glocks. They hold the sites, react to gunfire and footsteps, call out your position, and rush to defuse once the bomb is down. The first side to win 5 rounds takes the match.
+You attack one of two maps, choosing from the menu:
+
+- **de_timberline**: a Dust 2–style layout overgrown by forest.
+- **de_jaffa**: a Mirage-style layout in the old port city of Jaffa. T spawn is in the east and CT spawn in the south-west by the sea. A is reached by A Ramp, Palace, Jungle/Connector and CT. B is reached by Apartments, Short and Market. Window watches over Mid.
+
+You start with a Glock-19 and carry the bomb. Plant it at **A** or **B** and keep it alive for 40 seconds, or take out every defender. The defender bots also carry Glocks. They hold the sites, react to gunfire and footsteps, call out your position, and rush to defuse once the bomb is down. The first side to win 5 rounds takes the match.
 
 ## Money and the buy menu
 
@@ -29,6 +34,10 @@ Difficulty controls the bots' aim and reactions, and also the money and weapons:
 - **Normal:** you start with $800. Defenders move up to SMGs from round 2 and rifles from round 3, and some wear armor.
 - **Hard:** you start with $800 and earn less per kill. From round 2 the defenders carry rifles and an AWP, all in armor.
 
+## Hebrew announcer
+
+Key moments get a Hebrew voice line and banner: "איזה פצצה!" when the bomb is planted, "בול בראש!" for headshot kills, "יאללה, יאללה!" at round start, and more. The lines are spoken by the browser's built-in speech synthesis, so they need a Hebrew system voice (Windows, macOS, iOS and Android have one). Without one, the lines only show on screen. Turn it off with **Announcer → Off** in the menu.
+
 ## Controls
 
 | Key | Action |
@@ -50,11 +59,12 @@ Difficulty controls the bots' aim and reactions, and also the money and weapons:
 
 - [Three.js](https://threejs.org/) 0.160, loaded from a CDN through an import map, with no build step.
 - All textures are drawn procedurally on canvas, and all sounds are synthesized with WebAudio, so there are no asset files.
-- `src/world.js`: map grid, props, collision, ray casting, A* path finding, scenery
+- `src/world.js`: map definitions (layout, props, zones, defender spots), collision, ray casting, A* path finding, scenery per theme
 - `src/bots.js`: defender AI (hold, investigate, engage, defuse)
 - `src/main.js`: player, rounds, bomb, money, buy menu, HUD
 - `src/weapons.js`: weapon stats, prices, economy and bot loadouts per difficulty
 - `src/viewmodel.js`: first-person weapons and hands
+- `src/voice.js`: Hebrew announcer lines (Web Speech API)
 - `src/fx.js`, `src/audio.js`, `src/textures.js`: effects, sound, textures
 
 To run it locally, serve the folder over HTTP (ES modules won't load from `file://`):

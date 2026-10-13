@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Just Shoot It</title>
-  <meta name="description" content="Just Shoot It: a tactical browser FPS. Plant the bomb on de_timberline, a forest take on a classic map.">
+  <meta name="description" content="Just Shoot It: a tactical browser FPS. Plant the bomb on de_timberline in the forest or de_jaffa in the old port city.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%23ff7a18' stroke-width='12'/%3E%3Cpath d='M50 2v26M50 72v26M2 50h26M72 50h26' stroke='%23ff7a18' stroke-width='10'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Barlow+Condensed:wght@500;600;700&family=Heebo:wght@800&display=swap" rel="stylesheet">
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
   </script>
@@ -142,7 +142,7 @@
 
     #banner { position: absolute; left: 0; right: 0; top: 22%; text-align: center; opacity: 0; transform: translateY(-10px); transition: opacity .3s, transform .3s; }
     #banner.show { opacity: 1; transform: none; }
-    #banner-title { display: inline-block; font-family: 'Black Ops One', Impact, sans-serif; font-size: clamp(34px, 6vw, 64px); letter-spacing: 0.04em; padding: 6px 30px 2px; background: rgba(10,14,9,0.7); }
+    #banner-title { display: inline-block; font-family: 'Black Ops One', 'Heebo', Impact, sans-serif; font-size: clamp(34px, 6vw, 64px); letter-spacing: 0.04em; padding: 6px 30px 2px; background: rgba(10,14,9,0.7); }
     #banner-sub { margin-top: 8px; font-size: 20px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
     #banner.win #banner-title { color: var(--orange); }
     #banner.lose #banner-title { color: var(--ct); }
@@ -239,7 +239,7 @@
   <div id="loading">
     <div>
       <h1 class="logo">JUST SHOOT IT</h1>
-      <div style="text-align:center">Loading de_timberline…</div>
+      <div style="text-align:center">Loading…</div>
     </div>
   </div>
 
@@ -248,10 +248,16 @@
     <div class="menu-inner">
       <h1 class="logo">JUST<br>SH<svg class="xo" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="31" fill="none" stroke="currentColor" stroke-width="12"/><path d="M50 0v28M50 72v28M0 50h28M72 50h28" stroke="currentColor" stroke-width="10"/><circle cx="50" cy="50" r="5" fill="currentColor"/></svg>OT <span class="it">IT</span></h1>
       <div class="tagline">Plant it. Defend it. Just shoot it.</div>
-      <div class="mapname">Map: <b>de_timberline</b>, a classic layout lost in the woods · Start with a <b>Glock-19</b>, earn cash, buy up</div>
+      <div class="mapname">Map: <b id="mapname-title">de_timberline</b>, <span id="mapname-blurb">a classic layout lost in the woods</span> · Start with a <b>Glock-19</b>, earn cash, buy up</div>
       <button id="play" class="btn">▶ DEPLOY</button>
       <div class="touch-note">This game needs a keyboard and mouse.</div>
       <div class="settings">
+        <div class="row">
+          <label>Map</label>
+          <div class="seg" id="opt-map">
+            <button data-v="timberline">Timberline</button><button data-v="jaffa">Jaffa</button>
+          </div>
+        </div>
         <div class="row">
           <label>Difficulty</label>
           <div class="seg" id="opt-difficulty">
@@ -264,6 +270,13 @@
           <div class="seg" id="opt-bots">
             <button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="5">5</button><button data-v="6">6</button><button data-v="8">8</button>
           </div>
+        </div>
+        <div class="row">
+          <label>Announcer</label>
+          <div class="seg" id="opt-voice">
+            <button data-v="he">עברית</button><button data-v="off">Off</button>
+          </div>
+          <div class="diff-note" id="voice-note"></div>
         </div>
         <div class="row">
           <label>Sensitivity</label>
@@ -333,7 +346,7 @@
     <div id="crosshair"><i class="l"></i><i class="r"></i><i class="t"></i><i class="b"></i><span class="dot"></span></div>
     <div id="hitmarker"></div>
     <div id="death-msg"></div>
-    <div id="banner"><div id="banner-title"></div><div id="banner-sub"></div></div>
+    <div id="banner"><div id="banner-title" dir="auto"></div><div id="banner-sub"></div></div>
     <div id="center-msg"></div>
     <div id="progress"><div id="progress-label">PLANTING</div><div class="bar"><div id="progress-fill"></div></div></div>
     <div id="bomb-icon">◼ BOMB</div>
@@ -345,7 +358,7 @@
     <div id="ammo"><span id="ammo-mag">15</span><span class="sep">/</span><span id="ammo-res">90</span><span class="wname" id="wname">GLOCK-19</span></div>
     <div id="brand-mark">JUST SHOOT <b>IT</b></div>
     <div id="scoreboard">
-      <h3>JUST SHOOT IT · de_timberline</h3>
+      <h3 id="sb-title">JUST SHOOT IT · de_timberline</h3>
       <table><thead><tr><th>Player</th><th>Weapon</th><th>Money</th><th>K</th><th>D</th><th>Status</th></tr></thead><tbody id="sb-body"></tbody></table>
     </div>
     <div id="shop" class="hidden">
