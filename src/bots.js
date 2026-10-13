@@ -1,7 +1,7 @@
 // Defender bots: hold sites, react to sightings and gunfire, fight, and defuse the bomb.
 import * as THREE from 'three';
-import * as W from './world.js?v=2';
-import { WEAPONS } from './weapons.js?v=2';
+import * as W from './world.js?v=4';
+import { WEAPONS } from './weapons.js?v=4';
 
 export const NAMES = ['Ash', 'Birch', 'Cedar', 'Elm', 'Fir', 'Hazel', 'Maple', 'Oak', 'Pine', 'Rowan', 'Willow', 'Yew', 'Alder', 'Larch', 'Spruce'];
 
@@ -210,6 +210,7 @@ export class Bot {
       this.hp = 0;
       this.alive = false;
       if (this.game.bomb.defuser === this) this.game.bomb.defuser = null;
+      this.game.onBotDied(this);
       return true;
     }
     if (this.state !== 'engage' && this.state !== 'defuse') {

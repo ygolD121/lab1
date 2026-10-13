@@ -1,6 +1,6 @@
 // First-person weapons and hands, rendered in their own scene so they never clip into walls.
 import * as THREE from 'three';
-import * as TX from './textures.js?v=2';
+import * as TX from './textures.js?v=4';
 
 export function createViewModel() {
   const scene = new THREE.Scene();

@@ -47,6 +47,7 @@ Key moments get a Hebrew voice line and banner: "איזה פצצה!" when the bo
 | Right click (hold) | Aim down sights (scope with the AWP) |
 | `E` (hold, in a bombsite) | Plant the bomb |
 | `R` | Reload |
+| `F` | Pick up a dropped weapon (walking over one picks it up when that slot is empty) |
 | `B` | Buy menu (number keys to buy) |
 | `1` / `2` / `Q` / mouse wheel | Primary / pistol / last weapon / swap |
 | `Space` | Jump |

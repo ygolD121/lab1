@@ -1,13 +1,14 @@
 // Just Shoot It — game loop, player, rounds, bomb and HUD.
 import * as THREE from 'three';
-import * as W from './world.js?v=2';
-import { Bot, DIFFICULTY, NAMES } from './bots.js?v=2';
-import { audio } from './audio.js?v=2';
-import { voice, LINES } from './voice.js?v=2';
-import { createViewModel } from './viewmodel.js?v=2';
-import { createFx } from './fx.js?v=2';
-import * as TX from './textures.js?v=2';
-import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=2';
+import * as W from './world.js?v=4';
+import { Bot, DIFFICULTY, NAMES } from './bots.js?v=4';
+import { audio } from './audio.js?v=4';
+import { voice, LINES } from './voice.js?v=4';
+import { createViewModel } from './viewmodel.js?v=4';
+import { createFx } from './fx.js?v=4';
+import { createPickups } from './pickups.js?v=4';
+import * as TX from './textures.js?v=4';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=4';
 
 const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
@@ -66,6 +67,7 @@ W.loadMap(settings.map);
 let world = W.buildWorld(scene);
 const vm = createViewModel();
 const fx = createFx(scene);
+const pickups = createPickups(scene);
 
 function resize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -118,7 +120,7 @@ const game = {
   state: 'menu', phase: 'freeze', phaseT: 0, roundTime: ROUND_TIME, round: 0, scoreT: 0, scoreCT: 0, time: 0,
   diff: DIFFICULTY.normal, econ: ECONOMY.normal, lossStreak: 0, lastCallout: -99, shake: 0,
   stats: { kills: 0, deaths: 0, hs: 0 }, botNames: [], botStats: {},
-  damagePlayer, onBotSpotted, onDefuseStart, bombDefused, nearMiss, positionalSound,
+  damagePlayer, onBotDied, onBotSpotted, onDefuseStart, bombDefused, nearMiss, positionalSound,
 };
 
 // ---------- Weapons ----------
@@ -241,22 +243,47 @@ function lock() {
   } catch { /* the user can click the canvas to retry */ }
 }
 
+// Physical key for an event. e.code is the same on every layout (Hebrew, English…); when a browser or
+// keyboard tool leaves it empty, fall back to the key code or the Hebrew letter printed on that key.
+const HEBREW_KEYS = {
+  'ש': 'KeyA', 'נ': 'KeyB', 'ב': 'KeyC', 'ג': 'KeyD', 'ק': 'KeyE', 'כ': 'KeyF', 'ע': 'KeyG', 'י': 'KeyH', 'ן': 'KeyI',
+  'ח': 'KeyJ', 'ל': 'KeyK', 'ך': 'KeyL', 'צ': 'KeyM', 'מ': 'KeyN', 'ם': 'KeyO', 'פ': 'KeyP', '/': 'KeyQ', 'ר': 'KeyR',
+  'ד': 'KeyS', 'א': 'KeyT', 'ו': 'KeyU', 'ה': 'KeyV', "'": 'KeyW', 'ס': 'KeyX', 'ט': 'KeyY', 'ז': 'KeyZ',
+};
+function physicalKey(e) {
+  if (e.code && e.code !== 'Unidentified') return e.code;
+  if (e.keyCode >= 65 && e.keyCode <= 90) return `Key${String.fromCharCode(e.keyCode)}`;
+  if (e.keyCode >= 48 && e.keyCode <= 57) return `Digit${e.keyCode - 48}`;
+  const k = e.key || '';
+  if (HEBREW_KEYS[k]) return HEBREW_KEYS[k];
+  if (/^[a-z]$/i.test(k)) return `Key${k.toUpperCase()}`;
+  if (/^[0-9]$/.test(k)) return `Digit${k}`;
+  if (k === ' ') return 'Space';
+  if (k === 'Shift') return 'ShiftLeft';
+  return k;
+}
+
 window.addEventListener('keydown', (e) => {
   if (game.state !== 'playing') return;
-  if (e.code === 'Tab' || e.code === 'Space') e.preventDefault();
+  const code = physicalKey(e);
+  // Swallow the key so the browser doesn't act on the typed character. On a Hebrew layout W types ' and
+  // Q types /, which open Firefox's Quick Find bar and steal every key after that.
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !/^F\d+$/.test(code)) e.preventDefault();
   if (e.repeat) return;
-  keys.add(e.code);
-  if (e.code === 'KeyR') startReload();
-  if (e.code === 'Tab') scoreboardOpen = true;
-  if (e.code === 'KeyB') toggleShop();
-  else if (shopOpen && /^Digit[1-9]$/.test(e.code)) buy(SHOP[Number(e.code.slice(5)) - 1]);
-  else if (e.code === 'Digit1') switchTo('primary');
-  else if (e.code === 'Digit2') switchTo('pistol');
-  else if (e.code === 'KeyQ') switchTo(player.prev);
+  keys.add(code);
+  if (code === 'KeyR') startReload();
+  if (code === 'Tab') scoreboardOpen = true;
+  if (code === 'KeyB') toggleShop();
+  else if (shopOpen && /^Digit[1-9]$/.test(code)) buy(SHOP[Number(code.slice(5)) - 1]);
+  else if (code === 'Digit1') switchTo('primary');
+  else if (code === 'Digit2') switchTo('pistol');
+  else if (code === 'KeyQ') switchTo(player.prev);
+  else if (code === 'KeyF' && player.alive && player.nearPickup) pickUp(player.nearPickup);
 });
 window.addEventListener('keyup', (e) => {
-  keys.delete(e.code);
-  if (e.code === 'Tab') scoreboardOpen = false;
+  const code = physicalKey(e);
+  keys.delete(code);
+  if (code === 'Tab') scoreboardOpen = false;
 });
 window.addEventListener('blur', () => { keys.clear(); adsHeld = fireHeld = false; });
 document.addEventListener('mousemove', (e) => {
@@ -390,6 +417,7 @@ function toMenu() {
   game.bots = [];
   bombMesh.visible = false;
   fx.clear();
+  pickups.clear();
   voice.stop();
   setState('menu');
   if (document.pointerLockElement) document.exitPointerLock();
@@ -414,6 +442,7 @@ function startRound() {
   game.round++;
   for (const b of game.bots) b.dispose();
   fx.clear();
+  pickups.clear();
   const spawns = shuffle(W.cellsOfType(W.CT_SPAWN));
   const spots = shuffle(W.SPOTS.slice());
   const loadouts = botLoadouts(settings.difficulty, game.round, game.botNames.length);
@@ -612,7 +641,7 @@ function explode() {
       p.deathT = 0;
       game.stats.deaths++;
       killfeed('The bomb', 'You', false);
-      audio.shout();
+      deathShout();
     }
   }
   for (const o of game.bots) {
@@ -655,7 +684,7 @@ function damagePlayer(dmg, bot, head) {
     p.planting = false;
     p.reloading = false;
     game.stats.deaths++;
-    audio.shout();
+    deathShout();
     game.botStats[bot.name].kills++;
     killfeed(bot.name, 'You', head, bot.weapon.name);
     voice.say('died', 'urgent');
@@ -666,12 +695,34 @@ function damagePlayer(dmg, bot, head) {
   }
 }
 
+// Every death (yours, or a defender you kill): shout1, shout2 or silence, each a one-in-three chance.
+function deathShout() {
+  const roll = Math.floor(Math.random() * 3);
+  if (roll < 2) audio.shout(roll);
+}
+
+// A dead defender drops its gun with whatever was left in the magazine.
+function onBotDied(bot) {
+  bot.model.gun.visible = false;
+  pickups.drop(bot.weaponId, Math.max(0, bot.ammo), WEAPONS[bot.weaponId].reserve, bot.pos);
+}
+
+// Takes a weapon off the ground. A gun already in that slot is dropped where you stand.
+function pickUp(item) {
+  const p = player, slot = WEAPONS[item.id].slot, old = p.slots[slot];
+  pickups.take(item);
+  if (old) pickups.drop(old.id, old.ammo, old.reserve, p.pos);
+  p.slots[slot] = { id: item.id, ammo: item.ammo, reserve: item.reserve };
+  equip(slot);
+  audio.dryFire();
+}
+
 function onBotKilled(bot, head, w) {
   game.stats.kills++;
   if (head) game.stats.hs++;
   game.botStats[bot.name].deaths++;
   killfeed('You', bot.name, head, w.name);
-  audio.shout();
+  deathShout();
   addMoney(Math.round(w.reward * game.econ.killMul), `kill · ${w.name}`);
   if (game.phase === 'live' && game.bots.every((b) => !b.alive)) endRound('T', 'All defenders eliminated');
 }
@@ -927,6 +978,7 @@ function updateHud(dt) {
   else if (!p.alive && b.planted) msg = 'You are dead, but the bomb is still ticking…';
   else if (b.planted && b.defuser && b.defuser.alive) msg = 'The bomb is being defused!';
   else if (p.alive && p.hasBomb && p.inSite && !p.planting && game.phase === 'live') msg = 'Hold E to plant the bomb';
+  else if (p.alive && p.nearPickup) msg = `Press F to pick up the ${WEAPONS[p.nearPickup.id].name}`;
   setText(hud.center, msg);
   hud.center.classList.toggle('alert', msg.startsWith('The bomb is being'));
 
@@ -1013,6 +1065,10 @@ function updatePlayer(dt) {
   const walking = keys.has('ShiftLeft') || keys.has('ShiftRight');
   const speed = (p.crouching ? 2.3 : walking ? 2.7 : vm.adsAmount > 0.5 ? 3.9 : 5.6) * heldDef().speed;
   p.drawT = Math.max(0, p.drawT - dt);
+
+  // Walking over a gun picks it up if that slot is empty; otherwise F swaps (see the key handler).
+  p.nearPickup = p.planting ? null : pickups.nearest(p.pos);
+  if (p.nearPickup && !p.slots[WEAPONS[p.nearPickup.id].slot]) pickUp(p.nearPickup);
   let wx = 0, wz = 0;
   if (canMove && (f || s)) {
     const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
@@ -1129,6 +1185,7 @@ function update(dt) {
   for (const b of game.bots) b.update(dt);
   updateBomb(dt);
   fx.update(dt);
+  pickups.update(dt);
   vm.update(dt, {
     ads: adsHeld && !player.reloading && !player.planting && player.alive,
     speed: player.horizSpeed(), onGround: player.onGround, lookDX, lookDY,
@@ -1168,6 +1225,6 @@ setState('menu');
 $('loading').classList.add('done');
 $('build').textContent = `BUILD ${new URL(import.meta.url).searchParams.get('v') || 'dev'}`;
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__jsi = { game, player, camera, vm, W, tryShoot, sim(secs) { for (let i = 0; i < secs * 30; i++) if (game.state === 'playing') update(1 / 30); } };
+  window.__jsi = { game, player, camera, vm, W, tryShoot, pickups, sim(secs) { for (let i = 0; i < secs * 30; i++) if (game.state === 'playing') update(1 / 30); } };
 }
 requestAnimationFrame(frame);

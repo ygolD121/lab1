@@ -1,5 +1,5 @@
 // Sounds are synthesized with WebAudio, except the gunshot, which plays assets/gunshot.wav.
-let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null, moveSample = null, shoutSample = null, shoutSrc = null;
+let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null, moveSample = null, shoutSamples = [], shoutSrc = null;
 
 // Same version as the code's own URL, so a new build also re-downloads the sound files.
 const BUILD = new URL(import.meta.url).searchParams.get('v') || 'dev';
@@ -69,7 +69,7 @@ export const audio = {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     loadSample(`assets/gunshot.wav?v=${BUILD}`).then((b) => { shotSample = b; });
     loadSample(`assets/move.wav?v=${BUILD}`).then((b) => { moveSample = b; });
-    loadSample(`assets/shout.wav?v=${BUILD}`).then((b) => { shoutSample = b; });
+    ['shout1', 'shout2'].forEach((name, i) => loadSample(`assets/${name}.wav?v=${BUILD}`).then((b) => { shoutSamples[i] = b; }));
   },
   setVolume(v) {
     volume = v;
@@ -111,12 +111,13 @@ export const audio = {
     src.start();
     return moveSample.duration;
   },
-  // Shout clip for the player's kills and deaths. A new shout cuts off the previous one so quick kills don't pile up.
-  shout() {
-    if (!ctx || !shoutSample) return;
+  // Shout clip (0 = shout1, 1 = shout2). A new shout cuts off the previous one so quick kills don't pile up.
+  shout(which) {
+    const sample = shoutSamples[which];
+    if (!ctx || !sample) return;
     if (shoutSrc) shoutSrc.stop();
     shoutSrc = ctx.createBufferSource();
-    shoutSrc.buffer = shoutSample;
+    shoutSrc.buffer = sample;
     shoutSrc.connect(out(1.1));
     shoutSrc.start();
   },
