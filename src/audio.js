@@ -1,6 +1,9 @@
 // Sounds are synthesized with WebAudio, except the gunshot, which plays assets/gunshot.wav.
 let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null, moveSample = null, shoutSample = null, shoutSrc = null;
 
+// Same version as the code's own URL, so a new build also re-downloads the sound files.
+const BUILD = new URL(import.meta.url).searchParams.get('v') || 'dev';
+
 async function loadSample(url) {
   try {
     const data = await (await fetch(url)).arrayBuffer();
@@ -64,9 +67,9 @@ export const audio = {
     noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    loadSample('assets/gunshot.wav?v=2').then((b) => { shotSample = b; });
-    loadSample('assets/move.wav?v=1').then((b) => { moveSample = b; });
-    loadSample('assets/shout.wav?v=1').then((b) => { shoutSample = b; });
+    loadSample(`assets/gunshot.wav?v=${BUILD}`).then((b) => { shotSample = b; });
+    loadSample(`assets/move.wav?v=${BUILD}`).then((b) => { moveSample = b; });
+    loadSample(`assets/shout.wav?v=${BUILD}`).then((b) => { shoutSample = b; });
   },
   setVolume(v) {
     volume = v;

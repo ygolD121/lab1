@@ -65,6 +65,7 @@
     .controls dt { font-weight: 700; }
     .controls dd { margin: 0; color: rgba(242,239,228,0.75); }
     kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid rgba(242,239,228,0.4); border-bottom-width: 2px; border-radius: 3px; font: 600 13px 'Barlow Condensed', sans-serif; text-align: center; }
+    .build { position: fixed; left: 12px; bottom: 8px; font-size: 13px; letter-spacing: 0.12em; color: rgba(242,239,228,0.45); }
     .touch-note { display: none; margin-top: 14px; color: #ffb347; font-size: 15px; }
     @media (pointer: coarse) { .touch-note { display: block; } }
     @media (max-width: 900px) { .controls { position: static; margin-top: 18px; } #menu { flex-direction: column; align-items: flex-start; justify-content: flex-start; } }
@@ -288,6 +289,7 @@
         </div>
       </div>
     </div>
+    <div id="build" class="build"></div>
     <div class="controls">
       <h3>CONTROLS</h3>
       <dl>
@@ -368,6 +370,6 @@
     </div>
   </div>
 
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="src/main.js?v=2"></script>
 </body>
 </html>

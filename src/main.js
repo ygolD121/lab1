@@ -1,13 +1,13 @@
 // Just Shoot It — game loop, player, rounds, bomb and HUD.
 import * as THREE from 'three';
-import * as W from './world.js';
-import { Bot, DIFFICULTY, NAMES } from './bots.js';
-import { audio } from './audio.js';
-import { voice, LINES } from './voice.js';
-import { createViewModel } from './viewmodel.js';
-import { createFx } from './fx.js';
-import * as TX from './textures.js';
-import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js';
+import * as W from './world.js?v=2';
+import { Bot, DIFFICULTY, NAMES } from './bots.js?v=2';
+import { audio } from './audio.js?v=2';
+import { voice, LINES } from './voice.js?v=2';
+import { createViewModel } from './viewmodel.js?v=2';
+import { createFx } from './fx.js?v=2';
+import * as TX from './textures.js?v=2';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=2';
 
 const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
@@ -1166,6 +1166,7 @@ function frame(now) {
 }
 setState('menu');
 $('loading').classList.add('done');
+$('build').textContent = `BUILD ${new URL(import.meta.url).searchParams.get('v') || 'dev'}`;
 if (new URLSearchParams(location.search).has('debug')) {
   window.__jsi = { game, player, camera, vm, W, tryShoot, sim(secs) { for (let i = 0; i < secs * 30; i++) if (game.state === 'playing') update(1 / 30); } };
 }

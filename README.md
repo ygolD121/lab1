@@ -67,6 +67,16 @@ Key moments get a Hebrew voice line and banner: "איזה פצצה!" when the bo
 - `src/voice.js`: Hebrew announcer lines (Web Speech API)
 - `src/fx.js`, `src/audio.js`, `src/textures.js`: effects, sound, textures
 
+### Publishing an update
+
+GitHub Pages lets browsers cache files for 10 minutes, so every script and sound is loaded with a `?v=N` version tag. Before committing a change, run:
+
+```sh
+sh tools/bump-version.sh
+```
+
+This bumps the version everywhere at once, and browsers download the new build right away. The menu shows the build number in the bottom-left corner, so you can check which version you're running.
+
 To run it locally, serve the folder over HTTP (ES modules won't load from `file://`):
 
 ```sh
