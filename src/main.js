@@ -13,7 +13,7 @@ const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
 const ROUND_TIME = 115, FREEZE_TIME = 7, BOMB_TIME = 40, PLANT_TIME = 3.2, ROUNDS_TO_WIN = 5;
 const BUY_TIME = 20, DRAW_TIME = 0.4;
-const IDLE_TIME = 5, WHATSAPP_EVERY = 20;
+const IDLE_TIME = 5;
 const EYE = 1.68, CROUCH_EYE = 1.15;
 const lerp = THREE.MathUtils.lerp, clamp = THREE.MathUtils.clamp;
 const yawTo = (dx, dz) => Math.atan2(-dx, -dz);
@@ -402,7 +402,6 @@ function startMatch() {
   game.scoreT = game.scoreCT = game.round = game.lossStreak = 0;
   player.money = game.econ.start;
   player.alive = false; // so startRound hands out the starting loadout
-  game.whatsappT = 0;
   game.stats = { kills: 0, deaths: 0, hs: 0 };
   game.botNames = shuffle(NAMES.slice()).slice(0, settings.bots);
   game.botStats = Object.fromEntries(game.botNames.map((n) => [n, { kills: 0, deaths: 0 }]));
@@ -565,7 +564,7 @@ function tryShoot() {
   const muzzle = camera.localToWorld(new THREE.Vector3(lerp(0.13, 0, ads), lerp(-0.1, -0.03, ads), -0.55));
   fx.tracer(muzzle, end, 0xffe8b0, 0.3);
   fx.flashLight(muzzle);
-  audio.gunshot(0.85, 0, 0, w.sound);
+  audio.gunshot(0.85, 0, 0, w.sound, true);
   vm.shoot(w.kick);
   makeNoise(origin, 50);
 }
@@ -613,7 +612,7 @@ function explode() {
       p.deathT = 0;
       game.stats.deaths++;
       killfeed('The bomb', 'You', false);
-      playWhatsapp();
+      audio.shout();
     }
   }
   for (const o of game.bots) {
@@ -656,7 +655,7 @@ function damagePlayer(dmg, bot, head) {
     p.planting = false;
     p.reloading = false;
     game.stats.deaths++;
-    playWhatsapp();
+    audio.shout();
     game.botStats[bot.name].kills++;
     killfeed(bot.name, 'You', head, bot.weapon.name);
     voice.say('died', 'urgent');
@@ -672,6 +671,7 @@ function onBotKilled(bot, head, w) {
   if (head) game.stats.hs++;
   game.botStats[bot.name].deaths++;
   killfeed('You', bot.name, head, w.name);
+  audio.shout();
   addMoney(Math.round(w.reward * game.econ.killMul), `kill · ${w.name}`);
   if (game.phase === 'live' && game.bots.every((b) => !b.alive)) endRound('T', 'All defenders eliminated');
 }
@@ -1098,16 +1098,8 @@ function updateBomb(dt) {
   if (b.timer <= 0) explode();
 }
 
-// Restarting the 20-second timer on every play keeps a death clip and a timed clip from overlapping.
-function playWhatsapp() {
-  game.whatsappT = 0;
-  audio.whatsapp();
-}
-
 function update(dt) {
   game.time += dt;
-  game.whatsappT += dt;
-  if (game.whatsappT >= WHATSAPP_EVERY) playWhatsapp();
   if (game.phase === 'freeze') {
     game.phaseT -= dt;
     if (game.phaseT <= 0) game.phase = 'live';

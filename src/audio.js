@@ -1,5 +1,5 @@
 // Sounds are synthesized with WebAudio, except the gunshot, which plays assets/gunshot.wav.
-let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null, moveSample = null, whatsappSample = null;
+let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null, moveSample = null, shoutSample = null, shoutSrc = null;
 
 async function loadSample(url) {
   try {
@@ -66,7 +66,7 @@ export const audio = {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     loadSample('assets/gunshot.wav?v=2').then((b) => { shotSample = b; });
     loadSample('assets/move.wav?v=1').then((b) => { moveSample = b; });
-    loadSample('assets/whatsapp.wav?v=1').then((b) => { whatsappSample = b; });
+    loadSample('assets/shout.wav?v=1').then((b) => { shoutSample = b; });
   },
   setVolume(v) {
     volume = v;
@@ -75,11 +75,12 @@ export const audio = {
   get ready() { return !!ctx; },
 
   // freq/len/gain shape each weapon: low and long for the AWP, short and bright for the MP5.
-  gunshot(vol = 1, pan = 0, distant = 0, { freq = 170, len = 0.16, gain = 0.9 } = {}) {
+  // The player's guns play the recorded shot; bots (recorded = false) get the synthesized one.
+  gunshot(vol = 1, pan = 0, distant = 0, { freq = 170, len = 0.16, gain = 0.9 } = {}, recorded = false) {
     if (!ctx) return;
     const t = ctx.currentTime, o = out(vol, pan);
-    if (shotSample) {
-      // Every gun shares the recorded shot; distance muffles it and adds a little echo.
+    if (recorded && shotSample) {
+      // Distance muffles the recorded shot and adds a little echo.
       const src = ctx.createBufferSource();
       src.buffer = shotSample;
       src.playbackRate.value = 0.96 + Math.random() * 0.08;
@@ -107,13 +108,14 @@ export const audio = {
     src.start();
     return moveSample.duration;
   },
-  // WhatsApp voice clip: every 20 seconds of play and when the player dies.
-  whatsapp() {
-    if (!ctx || !whatsappSample) return;
-    const src = ctx.createBufferSource();
-    src.buffer = whatsappSample;
-    src.connect(out(1.1));
-    src.start();
+  // Shout clip for the player's kills and deaths. A new shout cuts off the previous one so quick kills don't pile up.
+  shout() {
+    if (!ctx || !shoutSample) return;
+    if (shoutSrc) shoutSrc.stop();
+    shoutSrc = ctx.createBufferSource();
+    shoutSrc.buffer = shoutSample;
+    shoutSrc.connect(out(1.1));
+    shoutSrc.start();
   },
   dryFire() {
     if (!ctx) return;
