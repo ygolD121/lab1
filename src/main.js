@@ -1,18 +1,22 @@
 // Just Shoot It — game loop, player, rounds, bomb and HUD.
 import * as THREE from 'three';
-import * as W from './world.js?v=7';
-import { Bot, DIFFICULTY, NAMES } from './bots.js?v=7';
-import { audio } from './audio.js?v=7';
-import { voice, LINES } from './voice.js?v=7';
-import { createViewModel } from './viewmodel.js?v=7';
-import { createFx } from './fx.js?v=7';
-import { createPickups } from './pickups.js?v=7';
-import * as TX from './textures.js?v=7';
-import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=7';
+import * as W from './world.js?v=9';
+import { Bot, DIFFICULTY, NAMES, PLANT_TIME } from './bots.js?v=9';
+import { audio } from './audio.js?v=9';
+import { voice, LINES } from './voice.js?v=9';
+import { createViewModel } from './viewmodel.js?v=9';
+import { createFx } from './fx.js?v=9';
+import { createPickups } from './pickups.js?v=9';
+import * as TX from './textures.js?v=9';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, KIT_PRICE, MAX_MONEY, SUPPRESSED, botLoadouts } from './weapons.js?v=9';
 
 const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
-const ROUND_TIME = 115, FREEZE_TIME = 7, BOMB_TIME = 40, PLANT_TIME = 3.2, ROUNDS_TO_WIN = 5;
+const ROUND_TIME = 115, FREEZE_TIME = 7, BOMB_TIME = 40;
+// 10 rounds, sides switch at the half. For quick testing, ?rounds=N in the URL shortens the match (e.g. ?rounds=1).
+const TOTAL_ROUNDS = Math.max(1, Math.floor(Number(new URLSearchParams(location.search).get('rounds'))) || 10);
+const HALFTIME = Math.floor(TOTAL_ROUNDS / 2); // 0 means no halftime
+const DEFUSE_TIME = 10, KIT_DEFUSE_TIME = 5;
 const BUY_TIME = 20, DRAW_TIME = 0.4;
 const IDLE_TIME = 5;
 const EYE = 1.68, CROUCH_EYE = 1.15;
@@ -109,6 +113,7 @@ const player = {
   slots: { primary: null, pistol: null }, cur: 'pistol', prev: 'primary', armor: 0, money: 0, drawT: 0,
   reloading: false, reloadT: 0, lastShot: -1, bloom: 0,
   hasBomb: true, planting: false, plantT: 0, keyT: 0, inSite: false, stepT: 0, deathT: 0, idleT: 0,
+  kit: false, defusing: false, defuseT: 0, nearBomb: false,
   eyePos() { return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeH, this.pos.z); },
   chestPos() { return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeH - 0.45, this.pos.z); },
   horizSpeed() { return Math.hypot(this.vel.x, this.vel.z); },
@@ -116,18 +121,25 @@ const player = {
 
 const game = {
   scene, player, fx, bots: [],
-  bomb: { planted: false, pos: new THREE.Vector3(), timer: 0, beepT: 0, ledT: 0, defuser: null, defuseSoundT: 0, site: '' },
-  state: 'menu', phase: 'freeze', phaseT: 0, roundTime: ROUND_TIME, round: 0, scoreT: 0, scoreCT: 0, time: 0,
+  // carrier/dropped/fetcher are used when the bots attack: who has the bomb, and who goes to pick it up.
+  bomb: { planted: false, pos: new THREE.Vector3(), timer: 0, beepT: 0, ledT: 0, defuser: null, defuseSoundT: 0, site: '', carrier: null, dropped: false, fetcher: null },
+  playerTeam: 'T', attack: null,
+  state: 'menu', phase: 'freeze', phaseT: 0, roundTime: ROUND_TIME, round: 0, scoreYou: 0, scoreBots: 0, time: 0,
   diff: DIFFICULTY.normal, econ: ECONOMY.normal, lossStreak: 0, lastCallout: -99, shake: 0,
   stats: { kills: 0, deaths: 0, hs: 0 }, botNames: [], botStats: {},
   damagePlayer, onBotDied, onBotSpotted, onDefuseStart, bombDefused, nearMiss, positionalSound,
+  botPlanted, botPickedUpBomb, guardSpot,
 };
 
 // ---------- Weapons ----------
 const newGun = (id) => ({ id, ammo: WEAPONS[id].mag, reserve: WEAPONS[id].reserve });
 const held = () => player.slots[player.cur];
 const heldDef = () => WEAPONS[held().id];
+// Attackers hold their guns one-handed and sideways: 15% more spread and kick, like the attacking bots.
+const SLOPPY = 1.15;
+const gunName = (g) => (g.silenced ? SUPPRESSED.name : WEAPONS[g.id].name);
 const money = (n) => `$${n.toLocaleString('en-US')}`;
+const botTeam = () => (game.playerTeam === 'T' ? 'CT' : 'T');
 player.slots.pistol = newGun('glock');
 
 function equip(slot) {
@@ -138,11 +150,23 @@ function equip(slot) {
   p.bloom = 0;
   p.drawT = DRAW_TIME;
   vm.setWeapon(held().id);
+  vm.setSuppressor(!!held().silenced);
+}
+
+// X with the M4 out screws the suppressor on or off. It takes a moment, and you can't shoot meanwhile.
+const SUPPRESSOR_TIME = 1.2;
+function toggleSuppressor() {
+  const p = player, g = held();
+  if (!p.alive || g.id !== 'm4' || p.reloading || p.planting || p.defusing || p.drawT > 0 || shopOpen) return;
+  g.silenced = !g.silenced;
+  p.drawT = SUPPRESSOR_TIME;
+  vm.setSuppressor(g.silenced, true);
+  audio.dryFire();
 }
 
 function switchTo(slot) {
   const p = player;
-  if (!p.alive || p.planting || slot === p.cur || !p.slots[slot]) return;
+  if (!p.alive || p.planting || p.defusing || slot === p.cur || !p.slots[slot]) return;
   equip(slot);
 }
 
@@ -163,7 +187,8 @@ function buyTimeLeft() {
   const p = player;
   if (game.state !== 'playing' || !p.alive || game.bomb.planted) return 0;
   if (game.phase === 'freeze') return BUY_TIME;
-  if (game.phase !== 'live' || W.cellType(p.pos.x, p.pos.z) !== W.T_SPAWN) return 0;
+  const spawn = game.playerTeam === 'T' ? W.T_SPAWN : W.CT_SPAWN;
+  if (game.phase !== 'live' || W.cellType(p.pos.x, p.pos.z) !== spawn) return 0;
   return Math.max(0, BUY_TIME - (ROUND_TIME - game.roundTime));
 }
 
@@ -182,20 +207,29 @@ function closeShop() {
   $('shop').classList.add('hidden');
 }
 
+// Defenders can also buy a defuse kit.
+// Each side has its own guns: defenders get the M4 (and a defuse kit), attackers the Uzi and the Tavor.
+const shopItems = () => (game.playerTeam === 'CT'
+  ? [...SHOP.map((id) => (id === 'ak47' ? 'm4' : id)), 'kit']
+  : SHOP.flatMap((id) => (id === 'mp5' ? ['uzi'] : id === 'ak47' ? ['ak47', 'tavor'] : [id])));
+const itemPrice = (id) => (id === 'armor' ? ARMOR_PRICE : id === 'kit' ? KIT_PRICE : WEAPONS[id].price);
+const itemOwned = (id) => (id === 'armor' ? player.armor >= 100 : id === 'kit' ? player.kit : player.slots[WEAPONS[id].slot]?.id === id);
+
 function renderShop() {
   const p = player;
   setText($('shop-money'), money(p.money));
-  $('shop-items').innerHTML = SHOP.map((id, i) => {
-    const armor = id === 'armor', w = WEAPONS[id];
-    const price = armor ? ARMOR_PRICE : w.price;
-    const owned = armor ? p.armor >= 100 : p.slots[w.slot]?.id === id;
+  $('shop-items').innerHTML = shopItems().map((id, i) => {
+    const armor = id === 'armor', kit = id === 'kit', w = WEAPONS[id];
+    const price = itemPrice(id), owned = itemOwned(id);
     const stats = armor
       ? 'Halves incoming damage · lasts until you die'
-      : `${w.dmg.body} dmg · ${w.mag}-round mag · ${w.auto ? 'full auto' : 'semi-auto'}${w.scope ? ' · scope' : ''}`;
+      : kit ? `Defuse in ${KIT_DEFUSE_TIME} seconds instead of ${DEFUSE_TIME} · lasts until you die`
+        : `${w.dmg.body} dmg · ${w.mag}-round mag · ${w.auto ? 'full auto' : 'semi-auto'}${w.scope ? ' · scope' : ''}`;
+    const name = armor ? 'Kevlar + Helmet' : kit ? 'Defuse Kit' : w.name;
     const cls = owned ? 'owned' : p.money < price ? 'poor' : '';
     return `<div class="shop-item ${cls}" data-id="${id}">
       <kbd>${i + 1}</kbd>
-      <div class="si-name">${armor ? 'Kevlar + Helmet' : w.name}<small>${armor ? 'Equipment' : w.slot === 'pistol' ? 'Pistol · slot 2' : 'Primary · slot 1'}</small><span>${stats}</span></div>
+      <div class="si-name">${name}<small>${armor || kit ? 'Equipment' : w.slot === 'pistol' ? 'Pistol · slot 2' : 'Primary · slot 1'}</small><span>${stats}</span></div>
       <div class="si-price">${owned ? 'OWNED' : money(price)}</div>
     </div>`;
   }).join('');
@@ -204,9 +238,7 @@ function renderShop() {
 function buy(id) {
   if (!id || buyTimeLeft() <= 0) return;
   const p = player;
-  const armor = id === 'armor', w = WEAPONS[id];
-  const price = armor ? ARMOR_PRICE : w.price;
-  const owned = armor ? p.armor >= 100 : p.slots[w.slot]?.id === id;
+  const price = itemPrice(id), owned = itemOwned(id);
   const row = $('shop-items').querySelector(`[data-id="${id}"]`);
   if (owned || p.money < price) {
     audio.dryFire();
@@ -216,10 +248,11 @@ function buy(id) {
     return;
   }
   p.money -= price;
-  if (armor) p.armor = 100;
+  if (id === 'armor') p.armor = 100;
+  else if (id === 'kit') p.kit = true;
   else {
-    p.slots[w.slot] = newGun(id);
-    equip(w.slot);
+    p.slots[WEAPONS[id].slot] = newGun(id);
+    equip(WEAPONS[id].slot);
   }
   audio.buy();
   renderShop();
@@ -265,6 +298,7 @@ function physicalKey(e) {
 
 window.addEventListener('keydown', (e) => {
   if (game.state !== 'playing') return;
+  if (roleOpen()) hideRole();
   const code = physicalKey(e);
   // Swallow the key so the browser doesn't act on the typed character. On a Hebrew layout W types ' and
   // Q types /, which open Firefox's Quick Find bar and steal every key after that.
@@ -274,11 +308,12 @@ window.addEventListener('keydown', (e) => {
   if (code === 'KeyR') startReload();
   if (code === 'Tab') scoreboardOpen = true;
   if (code === 'KeyB') toggleShop();
-  else if (shopOpen && /^Digit[1-9]$/.test(code)) buy(SHOP[Number(code.slice(5)) - 1]);
+  else if (shopOpen && /^Digit[1-9]$/.test(code)) buy(shopItems()[Number(code.slice(5)) - 1]);
   else if (code === 'Digit1') switchTo('primary');
   else if (code === 'Digit2') switchTo('pistol');
   else if (code === 'KeyQ') switchTo(player.prev);
   else if (code === 'KeyF' && player.alive && player.nearPickup) pickUp(player.nearPickup);
+  else if (code === 'KeyX') toggleSuppressor();
 });
 window.addEventListener('keyup', (e) => {
   const code = physicalKey(e);
@@ -301,6 +336,10 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mousedown', (e) => {
   if (game.state !== 'playing') return;
+  if (roleOpen() && locked) {
+    hideRole();
+    return;
+  }
   if (!locked) {
     if (e.target === canvas) lock();
     return;
@@ -427,7 +466,11 @@ function toMenu() {
 function startMatch() {
   game.diff = DIFFICULTY[settings.difficulty] || DIFFICULTY.normal;
   game.econ = ECONOMY[settings.difficulty] || ECONOMY.normal;
-  game.scoreT = game.scoreCT = game.round = game.lossStreak = 0;
+  // Your side is picked at random when you deploy; you switch at halftime.
+  game.playerTeam = Math.random() < 0.5 ? 'T' : 'CT';
+  game.switched = false;
+  game.scoreYou = game.scoreBots = game.round = game.lossStreak = 0;
+  game.history = []; // per round: did you win, and which side you were on
   player.money = game.econ.start;
   player.alive = false; // so startRound hands out the starting loadout
   game.stats = { kills: 0, deaths: 0, hs: 0 };
@@ -443,71 +486,138 @@ function startRound() {
   for (const b of game.bots) b.dispose();
   fx.clear();
   pickups.clear();
-  const spawns = shuffle(W.cellsOfType(W.CT_SPAWN));
+  const team = botTeam();
+  const spawns = shuffle(W.cellsOfType(team === 'CT' ? W.CT_SPAWN : W.T_SPAWN));
   const spots = shuffle(W.SPOTS.slice());
-  const loadouts = botLoadouts(settings.difficulty, game.round, game.botNames.length);
+  const loadouts = botLoadouts(settings.difficulty, game.round, game.botNames.length, team);
   game.bots = game.botNames.map((name, i) => {
     const [cx, cz] = spawns[i % spawns.length];
-    return new Bot(game, name, { x: W.C(cx) + (Math.random() - 0.5) * 1.5, z: W.C(cz) + (Math.random() - 0.5) * 1.5 }, spots[i % spots.length], loadouts[i]);
+    const spawn = { x: W.C(cx) + (Math.random() - 0.5) * 1.5, z: W.C(cz) + (Math.random() - 0.5) * 1.5 };
+    return new Bot(game, name, spawn, team === 'CT' ? spots[i % spots.length] : null, loadouts[i], team);
   });
+  Object.assign(game.bomb, { planted: false, defuser: null, timer: 0, carrier: null, dropped: false, fetcher: null });
+  if (team === 'T') planAttack();
 
   const p = player;
   // Survivors keep their guns and armor; the dead start over with a Glock. Ammo refills either way.
   if (!p.alive) {
     p.slots = { primary: null, pistol: newGun('glock') };
     p.armor = 0;
+    p.kit = false;
   }
   for (const g of Object.values(p.slots)) if (g) Object.assign(g, newGun(g.id));
   p.cur = p.slots.primary ? 'primary' : 'pistol';
   p.prev = p.cur === 'primary' ? 'pistol' : 'primary';
-  const [ax, az, bx, bz] = W.currentMap().playerSpawn;
-  const tCells = W.cellsOfType(W.T_SPAWN).filter(([x, z]) => x >= ax && x <= bx && z >= az && z <= bz);
-  const [sx, sz] = tCells[(Math.random() * tCells.length) | 0];
+  let startCells, startYaw = 0;
+  if (game.playerTeam === 'T') {
+    const [ax, az, bx, bz] = W.currentMap().playerSpawn;
+    startCells = W.cellsOfType(W.T_SPAWN).filter(([x, z]) => x >= ax && x <= bx && z >= az && z <= bz);
+  } else startCells = W.cellsOfType(W.CT_SPAWN);
+  const [sx, sz] = startCells[(Math.random() * startCells.length) | 0];
   p.pos.set(W.C(sx), 0, W.C(sz));
   p.vel.set(0, 0, 0);
+  if (game.playerTeam === 'CT') {
+    // Face the middle of the map, between the two bombsites.
+    const sites = [...W.cellsOfType(W.SITE_A), ...W.cellsOfType(W.SITE_B)];
+    const mx = sites.reduce((a, [x]) => a + W.C(x), 0) / sites.length, mz = sites.reduce((a, [, z]) => a + W.C(z), 0) / sites.length;
+    startYaw = yawTo(mx - p.pos.x, mz - p.pos.z);
+  }
   Object.assign(p, {
-    yaw: 0, pitch: 0, punchP: 0, punchY: 0, hp: 100, alive: true, onGround: true, crouching: false, eyeH: EYE,
-    reloading: false, bloom: 0, drawT: 0, hasBomb: true, planting: false, plantT: 0, deathT: 0, idleT: 0,
+    yaw: startYaw, pitch: 0, punchP: 0, punchY: 0, hp: 100, alive: true, onGround: true, crouching: false, eyeH: EYE,
+    reloading: false, bloom: 0, drawT: 0, hasBomb: game.playerTeam === 'T', planting: false, plantT: 0, deathT: 0, idleT: 0,
+    defusing: false, defuseT: 0,
   });
-  Object.assign(game.bomb, { planted: false, defuser: null, timer: 0 });
   bombMesh.visible = false;
   game.phase = 'freeze';
   game.phaseT = FREEZE_TIME;
   game.roundTime = ROUND_TIME;
   game.shake = 0;
+  vm.setSloppy(game.playerTeam === 'T');
   vm.setWeapon(held().id);
+  vm.setSuppressor(!!held().silenced);
   $('death-msg').classList.remove('show');
-  banner(`ROUND ${game.round}`, 'Press B to buy weapons · plant the bomb at A or B, or eliminate every defender', 2.6);
+  $('team-t').classList.toggle('mine', game.playerTeam === 'T');
+  $('team-ct').classList.toggle('mine', game.playerTeam === 'CT');
+  const role = game.playerTeam === 'T'
+    ? 'You are a terrorist · plant the bomb at A or B, or eliminate every counter-terrorist'
+    : 'You are a counter-terrorist · stop the terrorists from planting, or defuse the bomb';
+  if (game.round === 1 || game.switched) showRole(game.switched);
+  else banner(`ROUND ${game.round} OF ${TOTAL_ROUNDS}`, `${role} · press B to buy`, 2.6);
+  game.switched = false;
   voice.say('roundStart', 'urgent');
   game.lowTimeSaid = false;
 }
 
-function endRound(winner, reason, line = winner === 'T' ? 'attackersWin' : 'defendersWin') {
+// winner is a team ('T' attackers or 'CT' defenders). Money, banner and announcer follow whether it's your team.
+function endRound(winner, reason, line) {
   if (game.phase === 'over') return;
   game.phase = 'over';
   game.phaseT = 5;
-  if (winner === 'T') {
-    game.scoreT++;
+  const won = winner === game.playerTeam;
+  line ??= won ? 'attackersWin' : 'defendersWin'; // the announcer's "well done" / "come on" lines
+  game.history.push({ won, team: game.playerTeam });
+  if (won) game.scoreYou++;
+  else game.scoreBots++;
+  if (won) {
     game.lossStreak = 0;
     addMoney(game.econ.win, 'round won');
   } else {
-    game.scoreCT++;
     game.lossStreak++;
     addMoney(game.econ.loss + game.econ.lossBonus * Math.min(game.lossStreak - 1, 4), 'round lost');
   }
-  player.planting = false;
+  player.planting = player.defusing = false;
   closeShop();
-  banner(LINES[line], `${winner === 'T' ? 'Attackers win' : 'Defenders win'} · ${reason}`, 4.6, winner === 'T' ? 'win' : 'lose');
-  audio.jingle(winner === 'T');
+  banner(LINES[line], `${winner === 'T' ? 'Terrorists win' : 'Counter-terrorists win'} · ${reason}`, 4.6, won ? 'win' : 'lose');
+  audio.jingle(won);
   voice.say(line, 'queue');
 }
 
+// Full-screen card announcing your side, at the start of the match and at halftime. It goes away by itself
+// during the freeze time, or on any click or key.
+let roleTimer = 0;
+function showRole(halftime) {
+  const t = game.playerTeam === 'T', el = $('role-screen');
+  $('role-kicker').textContent = halftime ? `Halftime · round ${game.round} of ${TOTAL_ROUNDS} · sides switched` : `Match start · round 1 of ${TOTAL_ROUNDS}`;
+  $('role-name').textContent = t ? 'TERRORIST' : 'COUNTER-TERRORIST';
+  $('role-goal').textContent = t
+    ? 'Plant the bomb at A or B (hold E on the site), or eliminate every counter-terrorist.'
+    : 'Stop the terrorists from planting. If they plant, hold E on the bomb to defuse it.';
+  $('role-hint').textContent = `${halftime || !HALFTIME ? 'You stay on this side until the end of the match' : `You switch sides after round ${HALFTIME}`} · press B to buy · click or press any key to continue`;
+  el.className = t ? 't' : 'ct';
+  clearTimeout(roleTimer);
+  roleTimer = setTimeout(hideRole, 1500);
+}
+function hideRole() {
+  const el = $('role-screen');
+  if (el.classList.contains('hidden') || el.classList.contains('out')) return;
+  clearTimeout(roleTimer);
+  el.classList.add('out');
+  roleTimer = setTimeout(() => { el.className = 'hidden'; }, 350);
+}
+const roleOpen = () => !$('role-screen').classList.contains('hidden');
+
+// Halftime: you and the bots swap sides, and the economy starts over (starting money, a Glock, no armor or kit).
+function switchSides() {
+  game.playerTeam = game.playerTeam === 'T' ? 'CT' : 'T';
+  game.switched = true;
+  game.lossStreak = 0;
+  player.money = game.econ.start;
+  player.alive = false; // startRound hands out the starting loadout
+}
+
 function matchOver() {
-  const won = game.scoreT > game.scoreCT;
-  $('mo-title').textContent = won ? 'VICTORY' : 'DEFEAT';
-  $('mo-title').className = won ? 'win' : 'lose';
-  voice.say(won ? 'victory' : 'defeat', 'urgent');
-  $('mo-score').textContent = `${game.scoreT} – ${game.scoreCT}`;
+  const mine = game.scoreYou, theirs = game.scoreBots;
+  // Whoever won the majority of the 10 rounds takes the match; 5–5 is a draw.
+  const won = mine > theirs, draw = mine === theirs;
+  const result = won ? 'victory' : draw ? 'draw' : 'defeat';
+  $('matchover').classList.remove('victory', 'defeat', 'draw');
+  $('matchover').classList.add(result);
+  $('mo-title').textContent = result.toUpperCase();
+  $('mo-sub').textContent = won ? 'You won the majority of rounds' : draw ? `Each side won ${mine} rounds` : 'The bots won the majority of rounds';
+  if (!draw) voice.say(won ? 'victory' : 'defeat', 'urgent');
+  if (!draw) audio.jingle(won);
+  $('mo-score').innerHTML = `<small>YOU</small>${mine} – ${theirs}<small>BOTS</small>`;
+  $('mo-rounds').innerHTML = game.history.map((r, i) => `${i === HALFTIME ? '<i class="half" title="Halftime"></i>' : ''}<div class="r ${r.won ? 'w' : 'l'}" title="Round ${i + 1}: ${r.won ? 'won' : 'lost'} as ${r.team === 'T' ? 'terrorist' : 'counter-terrorist'}">${r.won ? 'W' : 'L'}<small>${r.team}</small></div>`).join('');
   const { kills, deaths, hs } = game.stats;
   $('mo-stats').innerHTML = `
     <div><b>${kills}</b><span>Kills</span></div>
@@ -523,6 +633,8 @@ function currentSpread() {
   const p = player, ads = vm.adsAmount;
   const w = heldDef();
   let s = lerp(w.spread[0], w.spread[1], ads) + p.horizSpeed() * w.move * (1 - ads * 0.4) + p.bloom;
+  if (held().silenced) s *= SUPPRESSED.spread;
+  if (game.playerTeam === 'T') s *= SLOPPY;
   if (!p.onGround) s += 0.07;
   if (p.crouching) s *= 0.75;
   return s;
@@ -531,7 +643,7 @@ function currentSpread() {
 function startReload() {
   const p = player;
   const g = held(), w = WEAPONS[g.id];
-  if (!p.alive || p.reloading || g.ammo >= w.mag || g.reserve <= 0 || p.planting) return;
+  if (!p.alive || p.reloading || g.ammo >= w.mag || g.reserve <= 0 || p.planting || p.defusing) return;
   p.reloading = true;
   p.reloadT = w.reload;
   vm.reload(w.reload);
@@ -544,7 +656,7 @@ function makeNoise(pos, radius) {
 
 function tryShoot() {
   const p = player;
-  if (!p.alive || game.phase === 'freeze' || p.planting || p.reloading || shopOpen || p.drawT > 0) return;
+  if (!p.alive || game.phase === 'freeze' || p.planting || p.defusing || p.reloading || shopOpen || p.drawT > 0) return;
   const g = held(), w = WEAPONS[g.id];
   if (game.time - p.lastShot < w.delay) return;
   if (g.ammo <= 0) {
@@ -564,7 +676,8 @@ function tryShoot() {
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
   dir.addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
   p.bloom = Math.min(w.bloomMax, p.bloom + w.bloom);
-  p.punchP += w.punch[vm.adsAmount > 0.5 ? 1 : 0];
+  const sil = !!g.silenced;
+  p.punchP += w.punch[vm.adsAmount > 0.5 ? 1 : 0] * (sil ? SUPPRESSED.punch : 1) * (game.playerTeam === 'T' ? SLOPPY : 1);
   p.punchY += (Math.random() - 0.5) * w.punch[0] * 0.5;
 
   const hit = W.raycastWorld(origin, dir, 250);
@@ -577,7 +690,7 @@ function tryShoot() {
   const end = origin.clone().addScaledVector(dir, best ? best.t : hit.t);
   if (best) {
     const head = best.part === 'head';
-    let dmg = w.dmg[best.part];
+    let dmg = w.dmg[best.part] * (sil ? SUPPRESSED.dmg : 1);
     if (best.t > 35) dmg *= w.falloff;
     if (best.bot.armor && best.part !== 'legs') dmg *= w.pen;
     dmg = Math.round(dmg);
@@ -591,11 +704,13 @@ function tryShoot() {
 
   const ads = vm.adsAmount;
   const muzzle = camera.localToWorld(new THREE.Vector3(lerp(0.13, 0, ads), lerp(-0.1, -0.03, ads), -0.55));
-  fx.tracer(muzzle, end, 0xffe8b0, 0.3);
-  fx.flashLight(muzzle);
-  audio.gunshot(0.85, 0, 0, w.sound, true);
-  vm.shoot(w.kick);
-  makeNoise(origin, 50);
+  if (!sil) {
+    fx.tracer(muzzle, end, 0xffe8b0, 0.3);
+    fx.flashLight(muzzle);
+  }
+  audio.gunshot(0.85, 0, 0, w.sound, true, sil);
+  vm.shoot(w.kick * (sil ? SUPPRESSED.punch : 1), sil);
+  makeNoise(origin, sil ? SUPPRESSED.hearing : 50);
 }
 
 function plantBomb(siteType) {
@@ -642,6 +757,7 @@ function explode() {
       game.stats.deaths++;
       killfeed('The bomb', 'You', false);
       deathShout(true);
+      p.defusing = false;
     }
   }
   for (const o of game.bots) {
@@ -681,7 +797,7 @@ function damagePlayer(dmg, bot, head) {
     p.hp = 0;
     p.alive = false;
     p.deathT = 0;
-    p.planting = false;
+    p.planting = p.defusing = false;
     p.reloading = false;
     game.stats.deaths++;
     deathShout(true);
@@ -689,9 +805,10 @@ function damagePlayer(dmg, bot, head) {
     killfeed(bot.name, 'You', head, bot.weapon.name);
     voice.say('died', 'urgent');
     const dm = $('death-msg');
-    dm.innerHTML = `Killed by <b>${bot.name}</b> · ${bot.weapon.name}${head ? ' · headshot' : ''}<small>${bot.hp} HP left · you lose your guns and armor</small>`;
+    dm.innerHTML = `Killed by <b class="${bot.team === 'T' ? 't' : ''}">${bot.name}</b> · ${bot.weapon.name}${head ? ' · headshot' : ''}<small>${bot.hp} HP left · you lose your guns and armor</small>`;
     dm.classList.add('show');
-    if (!game.bomb.planted) endRound('CT', 'The attacker was eliminated');
+    if (game.playerTeam === 'CT') endRound('T', 'The counter-terrorist was eliminated');
+    else if (!game.bomb.planted) endRound('CT', 'The terrorist was eliminated');
   }
 }
 
@@ -706,14 +823,25 @@ function deathShout(always = false) {
 function onBotDied(bot) {
   bot.model.gun.visible = false;
   pickups.drop(bot.weaponId, Math.max(0, bot.ammo), WEAPONS[bot.weaponId].reserve, bot.pos);
+  const b = game.bomb;
+  if (b.carrier === bot) {
+    // The carrier drops the bomb where it fell.
+    b.carrier = null;
+    b.dropped = true;
+    b.pos.copy(bot.pos);
+    bombMesh.position.copy(b.pos);
+    bombMesh.visible = true;
+    radio(`${bot.name} dropped the bomb!`);
+  }
+  if (b.dropped && (!b.fetcher || !b.fetcher.alive)) sendFetcher();
 }
 
 // Takes a weapon off the ground. A gun already in that slot is dropped where you stand.
 function pickUp(item) {
   const p = player, slot = WEAPONS[item.id].slot, old = p.slots[slot];
   pickups.take(item);
-  if (old) pickups.drop(old.id, old.ammo, old.reserve, p.pos);
-  p.slots[slot] = { id: item.id, ammo: item.ammo, reserve: item.reserve };
+  if (old) pickups.drop(old.id, old.ammo, old.reserve, p.pos, !!old.silenced);
+  p.slots[slot] = { id: item.id, ammo: item.ammo, reserve: item.reserve, silenced: item.silenced };
   equip(slot);
   audio.dryFire();
 }
@@ -725,7 +853,116 @@ function onBotKilled(bot, head, w) {
   killfeed('You', bot.name, head, w.name);
   deathShout();
   addMoney(Math.round(w.reward * game.econ.killMul), `kill · ${w.name}`);
-  if (game.phase === 'live' && game.bots.every((b) => !b.alive)) endRound('T', 'All defenders eliminated');
+  if (game.phase === 'live' && game.bots.every((b) => !b.alive)) {
+    if (game.playerTeam === 'T') endRound('T', 'All counter-terrorists eliminated');
+    else if (!game.bomb.planted) endRound('CT', 'All terrorists eliminated');
+    else flashCenter('All terrorists are down. Defuse the bomb!');
+  }
+}
+
+// ---------- Bots attacking ----------
+// Picks this round's bombsite, where the bomb goes, who carries it, and each attacker's route.
+function planAttack() {
+  const site = Math.random() < 0.5 ? 'A' : 'B';
+  const cells = shuffle(W.cellsOfType(site === 'A' ? W.SITE_A : W.SITE_B));
+  const at = ([x, z]) => ({ x: W.C(x) + (Math.random() - 0.5) * 1.6, z: W.C(z) + (Math.random() - 0.5) * 1.6 });
+  const ct = W.cellsOfType(W.CT_SPAWN);
+  const ctx = ct.reduce((a, [x]) => a + W.C(x), 0) / ct.length, ctz = ct.reduce((a, [, z]) => a + W.C(z), 0) / ct.length;
+  const plantPos = at(cells[0]);
+  game.attack = { site, plantPos, watchYaw: yawTo(ctx - plantPos.x, ctz - plantPos.z) };
+  // Detours through other parts of the map, used only when they aren't much longer than the direct route.
+  const length = (from, path) => path.reduce((sum, pt, i) => sum + Math.hypot(pt.x - (i ? path[i - 1].x : from.x), pt.z - (i ? path[i - 1].z : from.z)), 0);
+  const skip = /Spawn|Bombsite/;
+  const vias = W.currentMap().zones
+    .filter(([name]) => !skip.test(name))
+    .map(([, x0, z0, x1, z1]) => ({ x: W.C(Math.round((x0 + x1) / 2)), z: W.C(Math.round((z0 + z1) / 2)) }))
+    .filter((v) => W.isWalkable(...W.cellOf(v.x, v.z)));
+  const carrier = game.bots[(Math.random() * game.bots.length) | 0];
+  game.bomb.carrier = carrier;
+  game.bots.forEach((b, i) => {
+    b.target = at(cells[(i + 1) % cells.length]);
+    b.waitT = Math.random() * 4;
+    b.state = 'wait';
+    b.watchYaw = b.yaw = yawTo(plantPos.x - b.pos.x, plantPos.z - b.pos.z);
+    const goal = b === carrier ? plantPos : b.target;
+    const direct = W.findPath(b.pos, goal);
+    if (!direct || Math.random() < 0.4) return;
+    const base = length(b.pos, direct);
+    const options = shuffle(vias.slice());
+    for (const v of options) {
+      const a = W.findPath(b.pos, v), c = W.findPath(v, goal);
+      if (a && c && length(b.pos, a) + length(v, c) < base * 1.5) {
+        b.via = v;
+        break;
+      }
+    }
+  });
+}
+
+// The nearest living attacker goes to pick up a dropped bomb.
+function sendFetcher() {
+  const b = game.bomb;
+  let best = null, bestD = Infinity;
+  for (const o of game.bots) {
+    if (!o.alive) continue;
+    const d = o.pos.distanceTo(b.pos);
+    if (d < bestD) { best = o; bestD = d; }
+  }
+  b.fetcher = best;
+  if (best && best.state !== 'engage') {
+    best.state = 'fetchBomb';
+    best.path = null;
+  }
+}
+
+function botPickedUpBomb(bot) {
+  const b = game.bomb;
+  b.dropped = false;
+  b.fetcher = null;
+  b.carrier = bot;
+  bombMesh.visible = false;
+}
+
+function botPlanted(bot) {
+  const b = game.bomb;
+  b.planted = true;
+  b.pos.copy(bot.pos);
+  b.timer = BOMB_TIME;
+  b.beepT = 0;
+  b.carrier = null;
+  b.site = W.cellType(bot.pos.x, bot.pos.z) === W.SITE_A ? 'A' : 'B';
+  bombMesh.position.copy(b.pos);
+  bombMesh.rotation.y = bot.yaw;
+  bombMesh.visible = true;
+  audio.armed();
+  banner(LINES.planted, `Bomb planted at ${b.site}: defuse it within ${BOMB_TIME} seconds`, 2.6, 'warn');
+  voice.say('planted', 'urgent');
+  for (const o of game.bots) {
+    if (o.alive && o.state !== 'engage') {
+      o.state = 'postplant';
+      o.path = null;
+    }
+  }
+}
+
+// A walkable spot a few metres from the bomb for an attacker to guard it from.
+function guardSpot(bot) {
+  const b = game.bomb.pos;
+  for (let i = 0; i < 20; i++) {
+    const a = Math.random() * Math.PI * 2, r = 3 + Math.random() * 6;
+    const x = b.x + Math.cos(a) * r, z = b.z + Math.sin(a) * r;
+    if (W.isWalkable(...W.cellOf(x, z)) && W.hasLineOfSight(new THREE.Vector3(x, 1.6, z), new THREE.Vector3(b.x, 0.5, b.z))) return { x, z };
+  }
+  return { x: b.x + (bot.pos.x > b.x ? 2 : -2), z: b.z };
+}
+
+function playerDefused() {
+  const b = game.bomb, p = player;
+  b.planted = false;
+  p.defusing = false;
+  bombLedMat.emissiveIntensity = 0;
+  addMoney(game.econ.plant, 'bomb defused');
+  endRound('CT', 'You defused the bomb');
 }
 
 function onBotSpotted(bot) {
@@ -785,7 +1022,7 @@ const hud = {
   progress: $('progress'), fill: $('progress-fill'), plabel: $('progress-label'), bombIcon: $('bomb-icon'),
   cross: $('crosshair'), low: $('low-hp'), board: $('scoreboard'), boardBody: $('sb-body'), round: $('round-no'),
   money: $('money'), armor: $('armor'), armorVal: $('armor-val'), wname: $('wname'), slots: $('slots'),
-  scope: $('scope'), shopTime: $('shop-time'),
+  scope: $('scope'), shopTime: $('shop-time'), aliveT: $('alive-t'),
 };
 const setText = (el, v) => {
   if (el._v !== v) {
@@ -811,7 +1048,7 @@ function banner(title, sub, dur, kind = '') {
 function killfeed(killer, victim, head, gun = '') {
   const el = document.createElement('div');
   el.className = 'kf';
-  const cls = (n) => (n === 'You' ? 'me' : n === 'The bomb' ? 'bomb' : 'ct');
+  const cls = (n) => (n === 'You' ? 'me' : n === 'The bomb' ? 'bomb' : botTeam() === 'CT' ? 'ct' : 't');
   el.innerHTML = `<span class="${cls(killer)}">${killer}</span><span class="gun">${killer === 'The bomb' ? '💥' : gun.toUpperCase()}</span>${head ? '<span class="hs" title="Headshot">◉</span>' : ''}<span class="${cls(victim)}">${victim}</span>`;
   pushFeed(el);
 }
@@ -933,25 +1170,26 @@ function updateHud(dt) {
   const g = held(), w = WEAPONS[g.id];
   setText(hud.mag, String(g.ammo));
   setText(hud.res, String(g.reserve));
-  setText(hud.wname, w.name.toUpperCase());
+  setText(hud.wname, gunName(g).toUpperCase());
   hud.ammo.classList.toggle('low', g.ammo <= Math.ceil(w.mag / 5));
   setText(hud.money, money(p.money));
   hud.armor.classList.toggle('hidden', p.armor <= 0);
   setText(hud.armorVal, String(p.armor));
-  const slotsKey = `${p.cur}|${p.slots.primary?.id}|${p.slots.pistol?.id}`;
+  const slotsKey = `${p.cur}|${p.slots.primary?.id}|${p.slots.primary?.silenced}|${p.slots.pistol?.id}`;
   if (hud.slots._v !== slotsKey) {
     hud.slots._v = slotsKey;
     hud.slots.innerHTML = [['primary', 1], ['pistol', 2]]
       .filter(([slot]) => p.slots[slot])
-      .map(([slot, n]) => `<div class="${slot === p.cur ? 'on' : ''}"><kbd>${n}</kbd>${WEAPONS[p.slots[slot].id].name}</div>`).join('');
+      .map(([slot, n]) => `<div class="${slot === p.cur ? 'on' : ''}"><kbd>${n}</kbd>${gunName(p.slots[slot])}</div>`).join('');
   }
   const scoped = !!w.scope && vm.adsAmount > 0.85 && p.alive;
   hud.scope.classList.toggle('show', scoped);
   const buyLeft = buyTimeLeft();
   if (shopOpen) setText(hud.shopTime, game.phase === 'freeze' ? 'Buy time: round start' : `Buy time: ${Math.ceil(buyLeft)}s`);
-  setText(hud.scoreT, String(game.scoreT));
-  setText(hud.scoreCT, String(game.scoreCT));
-  setText(hud.round, `ROUND ${game.round}`);
+  // Scores stay with their team, so after halftime yours moves to the other side of the scoreboard.
+  setText(hud.scoreT, String(game.playerTeam === 'T' ? game.scoreYou : game.scoreBots));
+  setText(hud.scoreCT, String(game.playerTeam === 'CT' ? game.scoreYou : game.scoreBots));
+  setText(hud.round, `ROUND ${game.round}/${TOTAL_ROUNDS}`);
 
   if (b.planted) {
     setText(hud.timer, 'BOMB');
@@ -964,29 +1202,40 @@ function updateHud(dt) {
     hud.timer.className = game.roundTime < 15 && game.phase === 'live' ? 'urgent' : '';
   }
 
+  // Alive pips go under the bots' team.
   const pips = game.bots.map((o) => (o.alive ? '1' : '0')).join('');
-  if (hud.aliveCT._v !== pips) {
-    hud.aliveCT._v = pips;
-    hud.aliveCT.innerHTML = [...pips].map((c) => `<i class="${c === '1' ? 'on' : ''}"></i>`).join('');
+  const pipEl = botTeam() === 'CT' ? hud.aliveCT : hud.aliveT, otherEl = botTeam() === 'CT' ? hud.aliveT : hud.aliveCT;
+  if (pipEl._v !== pips) {
+    pipEl._v = pips;
+    pipEl.innerHTML = [...pips].map((c) => `<i class="${c === '1' ? 'on' : ''}"></i>`).join('');
+  }
+  if (otherEl._v !== '') {
+    otherEl._v = '';
+    otherEl.innerHTML = '';
   }
   setText(hud.loc, W.locationName(p.pos.x, p.pos.z));
 
   let msg = '';
   flashT -= dt;
-  if (!locked && game.state === 'playing') msg = 'Click to capture the mouse';
+  if (roleOpen()) msg = ''; // the side card is up
+  else if (!locked && game.state === 'playing') msg = 'Click to capture the mouse';
   else if (flashT > 0) msg = flashText;
   else if (game.phase === 'freeze') msg = `Round starts in ${Math.ceil(game.phaseT)}${shopOpen ? '' : ' · press B to buy'}`;
-  else if (!p.alive && b.planted) msg = 'You are dead, but the bomb is still ticking…';
+  else if (!p.alive && b.planted && game.playerTeam === 'T') msg = 'You are dead, but the bomb is still ticking…';
+  else if (p.alive && p.nearBomb && !p.defusing && game.phase === 'live') msg = `Hold E to defuse the bomb${p.kit ? ' (kit)' : ''}`;
   else if (b.planted && b.defuser && b.defuser.alive) msg = 'The bomb is being defused!';
   else if (p.alive && p.hasBomb && p.inSite && !p.planting && game.phase === 'live') msg = 'Hold E to plant the bomb';
   else if (p.alive && p.nearPickup) msg = `Press F to pick up the ${WEAPONS[p.nearPickup.id].name}`;
   setText(hud.center, msg);
   hud.center.classList.toggle('alert', msg.startsWith('The bomb is being'));
 
-  hud.progress.classList.toggle('show', p.planting);
+  hud.progress.classList.toggle('show', p.planting || p.defusing);
   if (p.planting) {
     hud.fill.style.width = `${(p.plantT / PLANT_TIME) * 100}%`;
     setText(hud.plabel, 'PLANTING BOMB');
+  } else if (p.defusing) {
+    hud.fill.style.width = `${(p.defuseT / (p.kit ? KIT_DEFUSE_TIME : DEFUSE_TIME)) * 100}%`;
+    setText(hud.plabel, p.kit ? 'DEFUSING BOMB · KIT' : 'DEFUSING BOMB');
   }
   hud.bombIcon.classList.toggle('show', p.hasBomb && p.alive);
   hud.bombIcon.classList.toggle('pulse', p.hasBomb && p.inSite);
@@ -1003,8 +1252,8 @@ function updateHud(dt) {
   boardT -= dt;
   if (scoreboardOpen && boardT <= 0) {
     boardT = 0.25;
-    const gear = (name, armor) => `${name}${armor ? ' + armor' : ''}`;
-    const rows = [`<tr class="me"><td>You</td><td>${gear(w.name, p.armor > 0)}</td><td>${money(p.money)}</td><td>${game.stats.kills}</td><td>${game.stats.deaths}</td><td>${p.alive ? 'Alive' : 'Dead'}</td></tr>`];
+    const gear = (name, armor, kit) => `${name}${armor ? ' + armor' : ''}${kit ? ' + kit' : ''}`;
+    const rows = [`<tr class="me"><td>You</td><td>${gear(w.name, p.armor > 0, p.kit)}</td><td>${money(p.money)}</td><td>${game.stats.kills}</td><td>${game.stats.deaths}</td><td>${p.alive ? 'Alive' : 'Dead'}</td></tr>`];
     for (const o of game.bots) {
       const s = game.botStats[o.name];
       rows.push(`<tr class="${o.alive ? '' : 'dead'}"><td>${o.name}</td><td>${gear(o.weapon.name, o.armor)}</td><td></td><td>${s.kills}</td><td>${s.deaths}</td><td>${o.alive ? 'Alive' : 'Dead'}</td></tr>`);
@@ -1048,6 +1297,27 @@ function updatePlayer(dt) {
     p.plantT = 0;
   }
 
+  // Defending: hold E next to the planted bomb to defuse it. Moving or letting go starts over.
+  const b = game.bomb;
+  p.nearBomb = game.playerTeam === 'CT' && b.planted && p.onGround && Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z) < 1.8;
+  if (keys.has('KeyE') && p.nearBomb && game.phase === 'live') {
+    if (!p.defusing) {
+      p.defusing = true;
+      p.defuseT = 0;
+      b.defuseSoundT = 0;
+      if (p.reloading) {
+        p.reloading = false;
+        vm.cancelReload();
+      }
+      makeNoise(b.pos, 35); // the attackers hear the defuse start
+    }
+    p.defuseT += dt;
+    if (p.defuseT >= (p.kit ? KIT_DEFUSE_TIME : DEFUSE_TIME)) playerDefused();
+  } else if (p.defusing) {
+    p.defusing = false;
+    p.defuseT = 0;
+  }
+
   if (p.reloading) {
     p.reloadT -= dt;
     if (p.reloadT <= 0) {
@@ -1059,7 +1329,7 @@ function updatePlayer(dt) {
     }
   }
 
-  const canMove = game.phase !== 'freeze' && !p.planting;
+  const canMove = game.phase !== 'freeze' && !p.planting && !p.defusing;
   const f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
   const s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
   p.crouching = keys.has('KeyC');
@@ -1117,7 +1387,7 @@ function updatePlayer(dt) {
   } else p.stepT = Math.min(p.stepT, 0.1);
 
   // Standing still for 5 seconds during a live round plays the "move" clip (not while planting).
-  if (game.phase === 'live' && !p.planting && hs < 0.3 && p.onGround) {
+  if (game.phase === 'live' && !p.planting && !p.defusing && hs < 0.3 && p.onGround) {
     p.idleT += dt;
     if (p.idleT >= IDLE_TIME) p.idleT = -audio.moveClip();
   } else p.idleT = Math.min(p.idleT, 0);
@@ -1145,7 +1415,7 @@ function updateBomb(dt) {
     b.ledT = 0.08;
     positionalSound('beep', b.pos);
   }
-  if (b.defuser && b.defuser.alive) {
+  if ((b.defuser && b.defuser.alive) || player.defusing) {
     b.defuseSoundT -= dt;
     if (b.defuseSoundT <= 0) {
       b.defuseSoundT = 0.7;
@@ -1175,8 +1445,11 @@ function update(dt) {
   } else if (game.phase === 'over') {
     game.phaseT -= dt;
     if (game.phaseT <= 0) {
-      if (game.scoreT >= ROUNDS_TO_WIN || game.scoreCT >= ROUNDS_TO_WIN) matchOver();
-      else startRound();
+      if (game.round >= TOTAL_ROUNDS) matchOver();
+      else {
+        if (game.round === HALFTIME) switchSides();
+        startRound();
+      }
       return;
     }
   }
@@ -1188,9 +1461,9 @@ function update(dt) {
   fx.update(dt);
   pickups.update(dt);
   vm.update(dt, {
-    ads: adsHeld && !player.reloading && !player.planting && player.alive,
+    ads: adsHeld && !player.reloading && !player.planting && !player.defusing && player.alive,
     speed: player.horizSpeed(), onGround: player.onGround, lookDX, lookDY,
-    lower: player.planting,
+    lower: player.planting || player.defusing,
   });
   lookDX = lookDY = 0;
   camera.fov = lerp(BASE_FOV, heldDef().adsFov, vm.adsAmount);
@@ -1226,6 +1499,6 @@ setState('menu');
 $('loading').classList.add('done');
 $('build').textContent = `BUILD ${new URL(import.meta.url).searchParams.get('v') || 'dev'}`;
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__jsi = { game, player, camera, vm, W, tryShoot, pickups, sim(secs) { for (let i = 0; i < secs * 30; i++) if (game.state === 'playing') update(1 / 30); } };
+  window.__jsi = { game, player, camera, vm, W, tryShoot, pickups, endRound, sim(secs) { for (let i = 0; i < secs * 30; i++) if (game.state === 'playing') update(1 / 30); } };
 }
 requestAnimationFrame(frame);

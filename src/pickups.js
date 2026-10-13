@@ -1,6 +1,6 @@
 // Weapons lying on the ground: dropped by dead defenders (or by the player when swapping) and picked up again.
 import * as THREE from 'three';
-import { WEAPONS } from './weapons.js?v=7';
+import { WEAPONS } from './weapons.js?v=9';
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x1d1e21, roughness: 0.5, metalness: 0.3 });
 const wood = new THREE.MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.8 });
@@ -19,7 +19,7 @@ function gunMesh(id) {
   B(0.05, 0.08, L, steel, 0, 0, 0);
   B(0.035, 0.11, 0.05, steel, 0, -0.08, L / 2 - 0.05);
   if (w.slot === 'primary') {
-    const furniture = id === 'awp' ? olive : id === 'ak47' ? wood : steel;
+    const furniture = id === 'awp' || id === 'tavor' ? olive : id === 'ak47' ? wood : steel;
     B(0.04, 0.13, 0.05, steel, 0, -0.09, -L * 0.05);
     B(0.045, 0.09, L * 0.35, furniture, 0, -0.01, L / 2 + L * 0.17);
   }
@@ -45,7 +45,7 @@ export function createPickups(scene) {
   return {
     items,
 
-    drop(id, ammo, reserve, pos) {
+    drop(id, ammo, reserve, pos, silenced = false) {
       const root = new THREE.Group();
       root.position.set(pos.x, pos.y, pos.z);
       const gun = gunMesh(id);
@@ -58,7 +58,7 @@ export function createPickups(scene) {
       ring.position.y = 0.02;
       root.add(ring);
       scene.add(root);
-      items.push({ id, ammo, reserve, pos: root.position, root, ring, t: Math.random() * 6 });
+      items.push({ id, ammo, reserve, silenced, pos: root.position, root, ring, t: Math.random() * 6 });
     },
 
     take(item) {

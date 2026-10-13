@@ -79,8 +79,9 @@ export const audio = {
 
   // freq/len/gain shape each weapon: low and long for the AWP, short and bright for the MP5.
   // The player's guns play the recorded shot; bots (recorded = false) get the synthesized one.
-  gunshot(vol = 1, pan = 0, distant = 0, { freq = 170, len = 0.16, gain = 0.9 } = {}, recorded = false) {
-    if (!ctx) return;
+  // suppressed: the player's M4 with the suppressor on, which fires without a gunshot sound.
+  gunshot(vol = 1, pan = 0, distant = 0, { freq = 170, len = 0.16, gain = 0.9 } = {}, recorded = false, suppressed = false) {
+    if (!ctx || suppressed) return;
     const t = ctx.currentTime, o = out(vol, pan);
     if (recorded && shotSample) {
       // Distance muffles the recorded shot and adds a little echo.

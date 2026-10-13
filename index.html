@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Just Shoot It</title>
-  <meta name="description" content="Just Shoot It: a tactical browser FPS. Plant the bomb on de_timberline in the forest or de_jaffa in the old port city.">
+  <meta name="description" content="Just Shoot It: a tactical browser FPS. Play terrorist or counter-terrorist: plant or defuse the bomb on de_timberline in the forest or de_jaffa in the old port city.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%23ff7a18' stroke-width='12'/%3E%3Cpath d='M50 2v26M50 72v26M2 50h26M72 50h26' stroke='%23ff7a18' stroke-width='10'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,9 +74,23 @@
     #pause h2, #matchover h2 { font-family: 'Black Ops One', Impact, sans-serif; font-weight: 400; font-size: 64px; margin: 0; letter-spacing: 0.04em; }
     #pause .slider { width: min(340px, 90vw); }
     .btn-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-    #mo-title.win { color: var(--green); }
-    #mo-title.lose { color: var(--red); }
-    #mo-score { font-family: 'Black Ops One', Impact, sans-serif; font-size: 40px; }
+    /* Result screens: green victory, red defeat, grey draw */
+    #matchover.victory { background: radial-gradient(ellipse at 50% 35%, rgba(40,110,40,0.55), rgba(8,12,7,0.92) 70%); }
+    #matchover.defeat { background: radial-gradient(ellipse at 50% 35%, rgba(130,25,20,0.55), rgba(8,12,7,0.92) 70%); }
+    #matchover.draw { background: radial-gradient(ellipse at 50% 35%, rgba(120,120,110,0.4), rgba(8,12,7,0.92) 70%); }
+    #matchover h2#mo-title { font-size: clamp(64px, 13vw, 140px); line-height: 1; letter-spacing: 0.06em; }
+    #matchover.victory #mo-title { color: var(--green); text-shadow: 0 0 40px rgba(125,255,106,0.35); }
+    #matchover.defeat #mo-title { color: var(--red); text-shadow: 0 0 40px rgba(255,59,48,0.35); }
+    #matchover.draw #mo-title { color: #d8d4c6; }
+    #mo-sub { font-size: 20px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(242,239,228,0.75); margin-top: -8px; }
+    #mo-score { font-family: 'Black Ops One', Impact, sans-serif; font-size: 44px; display: flex; align-items: baseline; gap: 18px; }
+    #mo-score small { font-family: 'Barlow Condensed', sans-serif; font-size: 16px; letter-spacing: 0.2em; color: rgba(242,239,228,0.6); }
+    #mo-rounds { display: flex; gap: 5px; align-items: flex-end; }
+    #mo-rounds .r { width: 34px; padding: 4px 0 3px; display: flex; flex-direction: column; align-items: center; font-weight: 700; font-size: 15px; background: rgba(242,239,228,0.08); border-bottom: 3px solid transparent; }
+    #mo-rounds .r small { font-size: 10px; letter-spacing: 0.1em; opacity: 0.6; }
+    #mo-rounds .r.w { color: var(--green); border-color: var(--green); }
+    #mo-rounds .r.l { color: var(--red); border-color: var(--red); }
+    #mo-rounds .half { width: 2px; align-self: stretch; background: rgba(242,239,228,0.35); margin: 0 6px; }
     #mo-stats { display: flex; gap: 28px; flex-wrap: wrap; justify-content: center; margin: 6px 0 10px; }
     #mo-stats div { display: flex; flex-direction: column; }
     #mo-stats b { font-size: 34px; }
@@ -91,7 +105,7 @@
     #topbar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: stretch; gap: 2px; }
     #topbar .team { min-width: 92px; padding: 4px 12px; display: flex; flex-direction: column; align-items: center; background: var(--panel); }
     #topbar .team span { font-family: 'Black Ops One', Impact, sans-serif; font-size: 30px; line-height: 1; }
-    #topbar .team small { font-size: 12px; letter-spacing: 0.18em; font-weight: 700; }
+    #topbar .team small { font-size: 11px; letter-spacing: 0.08em; font-weight: 700; }
     #topbar .t span, #topbar .t small { color: var(--orange); }
     #topbar .ct span, #topbar .ct small { color: var(--ct); }
     #topbar .mid { display: flex; flex-direction: column; align-items: center; background: rgba(10,14,9,0.82); padding: 4px 18px; min-width: 110px; }
@@ -100,14 +114,20 @@
     #timer.urgent { color: var(--red); }
     #timer.bomb { color: var(--red); animation: pulse 0.8s infinite; }
     #round-no { font-size: 12px; letter-spacing: 0.2em; font-weight: 700; color: rgba(242,239,228,0.6); }
-    #alive-ct { display: flex; gap: 3px; margin-top: 3px; }
-    #alive-ct i { width: 8px; height: 12px; background: rgba(111,168,255,0.25); clip-path: polygon(50% 0, 100% 30%, 100% 100%, 0 100%, 0 30%); }
+    #alive-ct, #alive-t { display: flex; gap: 3px; margin-top: 3px; }
+    #alive-ct i, #alive-t i { width: 8px; height: 12px; background: rgba(111,168,255,0.25); clip-path: polygon(50% 0, 100% 30%, 100% 100%, 0 100%, 0 30%); }
+    #alive-t i { background: rgba(255,122,24,0.25); }
     #alive-ct i.on { background: var(--ct); }
+    #alive-t i.on { background: var(--orange); }
+    #topbar .team.mine { box-shadow: inset 0 -3px 0 currentColor; }
+    #topbar .t.mine { color: var(--orange); }
+    #topbar .ct.mine { color: var(--ct); }
 
     #killfeed { position: absolute; right: 18px; top: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
     .kf { background: var(--panel); padding: 4px 10px; font-size: 17px; font-weight: 600; display: flex; gap: 8px; align-items: center; border: 1px solid transparent; animation: kfIn .2s ease-out; }
     .kf .me { color: var(--orange); }
     .kf .ct { color: var(--ct); }
+    .kf .t { color: #e0a040; }
     .kf .bomb { color: #ffb347; }
     .kf .gun { font-size: 12px; letter-spacing: 0.12em; color: rgba(242,239,228,0.7); }
     .kf .hs { color: var(--red); font-size: 15px; }
@@ -140,6 +160,20 @@
     #progress-label { font-weight: 700; letter-spacing: 0.2em; font-size: 15px; margin-bottom: 5px; color: var(--orange); }
     #progress .bar { height: 8px; background: rgba(0,0,0,0.5); border: 1px solid rgba(242,239,228,0.4); }
     #progress-fill { height: 100%; width: 0; background: var(--orange); }
+
+    /* Side card at match start and at halftime */
+    #role-screen { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; background: radial-gradient(ellipse at center, rgba(8,12,7,0.82) 0%, rgba(8,12,7,0.94) 70%); z-index: 5; }
+    #role-screen.hidden { display: none; }
+    #role-screen.out { animation: roleOut .35s ease-in forwards; }
+    @keyframes roleOut { to { opacity: 0; } }
+    .role-card { text-align: center; max-width: 960px; }
+    .role-kicker { font-size: 15px; letter-spacing: 0.3em; font-weight: 700; color: rgba(242,239,228,0.6); text-transform: uppercase; }
+    .role-you { margin-top: 18px; font-family: 'Black Ops One', Impact, sans-serif; font-size: clamp(24px, 4vw, 36px); letter-spacing: 0.1em; }
+    #role-name { font-family: 'Black Ops One', Impact, sans-serif; font-size: clamp(56px, 12vw, 120px); line-height: 1; letter-spacing: 0.04em; }
+    #role-screen.t #role-name { color: var(--orange); }
+    #role-screen.ct #role-name { color: var(--ct); font-size: clamp(28px, 5vw, 64px); white-space: nowrap; }
+    #role-goal { margin-top: 16px; font-size: 22px; font-weight: 600; line-height: 1.35; }
+    .role-hint { margin-top: 26px; font-size: 15px; letter-spacing: 0.08em; color: rgba(242,239,228,0.55); }
 
     #banner { position: absolute; left: 0; right: 0; top: 22%; text-align: center; opacity: 0; transform: translateY(-10px); transition: opacity .3s, transform .3s; }
     #banner.show { opacity: 1; transform: none; }
@@ -180,6 +214,7 @@
     #death-msg { position: absolute; left: 50%; top: 40%; transform: translateX(-50%); text-align: center; font-size: 26px; font-weight: 600; opacity: 0; transition: opacity .3s; }
     #death-msg.show { opacity: 1; }
     #death-msg b { color: var(--ct); }
+    #death-msg b.t { color: #e0a040; }
     #death-msg small { display: block; font-size: 16px; opacity: 0.7; }
 
     #scoreboard { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); min-width: min(560px, 92vw); background: rgba(10,14,9,0.88); padding: 18px 22px; display: none; border-top: 3px solid var(--orange); }
@@ -267,7 +302,7 @@
           <div class="diff-note" id="diff-note"></div>
         </div>
         <div class="row">
-          <label>Defenders</label>
+          <label>Bots</label>
           <div class="seg" id="opt-bots">
             <button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="5">5</button><button data-v="6">6</button><button data-v="8">8</button>
           </div>
@@ -296,9 +331,10 @@
         <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move</dd>
         <dt>Left click</dt><dd>Shoot</dd>
         <dt>Right click</dt><dd>Aim down sights (hold)</dd>
-        <dt><kbd>E</kbd> (hold)</dt><dd>Plant the bomb at A or B</dd>
+        <dt><kbd>E</kbd> (hold)</dt><dd>Plant the bomb (terrorist) / defuse it (counter-terrorist)</dd>
         <dt><kbd>R</kbd></dt><dd>Reload</dd>
         <dt><kbd>F</kbd></dt><dd>Pick up a dropped weapon</dd>
+        <dt><kbd>X</kbd></dt><dd>M4: attach / remove the suppressor</dd>
         <dt><kbd>B</kbd></dt><dd>Buy menu (round start, in spawn)</dd>
         <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>Q</kbd> / wheel</dt><dd>Primary / pistol / last weapon / swap</dd>
         <dt><kbd>Space</kbd></dt><dd>Jump</dd>
@@ -325,7 +361,9 @@
   <div id="matchover" class="screen hidden">
     <h1 class="logo" style="font-size:28px">JUST SHOOT <span class="it">IT</span></h1>
     <h2 id="mo-title">VICTORY</h2>
-    <div id="mo-score">5 – 0</div>
+    <div id="mo-sub"></div>
+    <div id="mo-score"></div>
+    <div id="mo-rounds" aria-label="Rounds won and lost"></div>
     <div id="mo-stats"></div>
     <div class="btn-row">
       <button id="again" class="btn">PLAY AGAIN</button>
@@ -337,9 +375,9 @@
   <div id="hud" class="hidden">
     <div id="radar-wrap"><canvas id="radar" width="200" height="200"></canvas><div id="loc"></div></div>
     <div id="topbar">
-      <div class="team t"><span id="score-t">0</span><small>ATTACK</small></div>
+      <div class="team t" id="team-t"><span id="score-t">0</span><small>TERRORISTS</small><div id="alive-t"></div></div>
       <div class="mid"><div id="timer">1:55</div><div id="round-no">ROUND 1</div></div>
-      <div class="team ct"><span id="score-ct">0</span><small>DEFEND</small><div id="alive-ct"></div></div>
+      <div class="team ct" id="team-ct"><span id="score-ct">0</span><small>COUNTER-TERRORISTS</small><div id="alive-ct"></div></div>
     </div>
     <div id="killfeed"></div>
     <div id="dmg-vignette"></div>
@@ -350,6 +388,15 @@
     <div id="hitmarker"></div>
     <div id="death-msg"></div>
     <div id="banner"><div id="banner-title" dir="auto"></div><div id="banner-sub"></div></div>
+    <div id="role-screen" class="hidden">
+      <div class="role-card">
+        <div class="role-kicker" id="role-kicker"></div>
+        <div class="role-you">YOU ARE A</div>
+        <div id="role-name"></div>
+        <div id="role-goal"></div>
+        <div class="role-hint" id="role-hint"></div>
+      </div>
+    </div>
     <div id="center-msg"></div>
     <div id="progress"><div id="progress-label">PLANTING</div><div class="bar"><div id="progress-fill"></div></div></div>
     <div id="bomb-icon">◼ BOMB</div>
@@ -371,6 +418,6 @@
     </div>
   </div>
 
-  <script type="module" src="src/main.js?v=7"></script>
+  <script type="module" src="src/main.js?v=9"></script>
 </body>
 </html>

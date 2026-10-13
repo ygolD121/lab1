@@ -1,9 +1,12 @@
-// Defender bots: hold sites, react to sightings and gunfire, fight, and defuse the bomb.
+// Bots on either team. Defenders (CT) hold sites, fight and defuse; attackers (T) push a site, plant and guard
+// the bomb. Both react to sightings and gunfire.
 import * as THREE from 'three';
-import * as W from './world.js?v=7';
-import { WEAPONS } from './weapons.js?v=7';
+import * as W from './world.js?v=9';
+import { WEAPONS } from './weapons.js?v=9';
 
 export const NAMES = ['Ash', 'Birch', 'Cedar', 'Elm', 'Fir', 'Hazel', 'Maple', 'Oak', 'Pine', 'Rowan', 'Willow', 'Yew', 'Alder', 'Larch', 'Spruce'];
+
+export const PLANT_TIME = 3.2;
 
 export const DIFFICULTY = {
   easy: { react: [0.6, 0.95], acc: 0.3, hs: 0.05, turn: 4.5, fire: [0.45, 0.7], see: 65, investigate: 0.3, rotate: 0.25, defuse: 8 },
@@ -33,10 +36,12 @@ function sharedMats() {
   return shared;
 }
 
-function buildModel() {
+// Defenders wear blue with an olive vest; attackers wear brown with a dark vest and balaclava.
+function buildModel(team) {
   const m = sharedMats();
-  const uniform = new THREE.MeshStandardMaterial({ color: 0x3d5a80, roughness: 0.85 });
-  const vest = new THREE.MeshStandardMaterial({ color: 0x6b6a4e, roughness: 0.9 });
+  const t = team === 'T';
+  const uniform = new THREE.MeshStandardMaterial({ color: t ? 0x7a5c3a : 0x3d5a80, roughness: 0.85 });
+  const vest = new THREE.MeshStandardMaterial({ color: t ? 0x34342c : 0x6b6a4e, roughness: 0.9 });
   const skin = new THREE.MeshStandardMaterial({ color: 0xc89b78, roughness: 0.8 });
   const root = new THREE.Group();
   root.rotation.order = 'YXZ';
@@ -67,34 +72,51 @@ function buildModel() {
   head.position.set(0, 1.56, 0);
   body.add(head);
   B(0.24, 0.26, 0.25, skin, 0, 0.14, 0, head);
-  B(0.29, 0.13, 0.3, m.helmet, 0, 0.29, 0.01, head);
+  B(0.29, 0.13, 0.3, t ? m.boots : m.helmet, 0, 0.29, 0.01, head);
   B(0.22, 0.05, 0.02, m.goggle, 0, 0.19, -0.13, head);
-  const arm = (x, rz) => {
+  const arm = (x, rz, rx = 1.35) => {
     const g = new THREE.Group();
     g.position.set(x, 1.45, 0);
-    g.rotation.set(1.35, 0, rz);
+    g.rotation.set(rx, 0, rz);
     body.add(g);
     B(0.12, 0.5, 0.12, uniform, 0, -0.22, 0, g);
     B(0.11, 0.1, 0.11, m.glove, 0, -0.48, 0, g);
     return g;
   };
-  arm(0.3, -0.38);
-  arm(-0.3, 0.45);
-  const gun = B(0.05, 0.11, 0.22, m.gun, 0.04, 1.4, -0.6, body);
-  return { root, body, legL, legR, head, gun, flashMats: [uniform, vest, skin] };
+  // Defenders hold the gun in both hands at the chest. Attackers hold it out in one hand by the grip,
+  // tipped on its side, with the other arm hanging.
+  let gun;
+  if (t) {
+    // Arm swung out to the side and low, gun turned flat on its side and pointing off-line.
+    arm(0.3, 0.5, 1.25);
+    arm(-0.3, 0.2, 0.1);
+    gun = B(0.05, 0.11, 0.22, m.gun, 0.53, 1.32, -0.6, body);
+    gun.rotation.z = -1.5;
+    gun.rotation.y = -0.2;
+    body.rotation.x = 0.08; // leaning back
+    head.rotation.z = 0.15;
+  } else {
+    arm(0.3, -0.38);
+    arm(-0.3, 0.45);
+    gun = B(0.05, 0.11, 0.22, m.gun, 0.04, 1.4, -0.6, body);
+  }
+  const pack = B(0.34, 0.3, 0.14, m.gun, 0, 1.27, 0.22, body); // the bomb, carried on the back
+  pack.visible = false;
+  return { root, body, legL, legR, head, gun, pack, flashMats: [uniform, vest, skin] };
 }
 
 export class Bot {
-  constructor(game, name, spawn, spot, loadout = { weapon: 'glock', armor: false }) {
+  constructor(game, name, spawn, spot, loadout = { weapon: 'glock', armor: false }, team = 'CT') {
     this.game = game;
     this.name = name;
+    this.team = team;
     this.pos = new THREE.Vector3(spawn.x, 0, spawn.z);
     this.vel = new THREE.Vector3();
     this.yaw = Math.PI;
     this.weaponId = loadout.weapon;
     this.weapon = WEAPONS[loadout.weapon];
     this.armor = loadout.armor;
-    this.model = buildModel();
+    this.model = buildModel(team);
     // Stretch the gun forward from the hands to match the weapon's length.
     const len = this.weapon.bot.len, m = this.model;
     m.gunZ = -0.49 - 0.11 * len;
@@ -103,7 +125,13 @@ export class Bot {
     this.muzzleZ = m.gunZ - 0.11 * len - 0.03;
     game.scene.add(m.root);
     this.spot = spot;
-    this.watchYaw = yawTo(W.C(spot.look[0]) - W.C(spot.cell[0]), W.C(spot.look[1]) - W.C(spot.cell[1]));
+    this.watchYaw = spot ? yawTo(W.C(spot.look[0]) - W.C(spot.cell[0]), W.C(spot.look[1]) - W.C(spot.cell[1])) : this.yaw;
+    // Attackers: where on the site this bot heads, an optional detour on the way, and a start delay.
+    this.target = null;
+    this.via = null;
+    this.waitT = 0;
+    this.plantT = 0;
+    this.guardPos = null;
     this.hp = 100;
     this.alive = true;
     this.state = 'goto';
@@ -137,13 +165,27 @@ export class Bot {
 
   eye() { return new THREE.Vector3(this.pos.x, this.pos.y + 1.68, this.pos.z); }
   muzzle() {
-    return new THREE.Vector3(0.04, 1.43, this.muzzleZ).applyAxisAngle(UP, this.yaw).add(this.pos);
+    return new THREE.Vector3(this.team === 'T' ? 0.55 : 0.04, this.team === 'T' ? 1.33 : 1.43, this.muzzleZ).applyAxisAngle(UP, this.yaw).add(this.pos);
   }
   spotPos() { return { x: W.C(this.spot.cell[0]), z: W.C(this.spot.cell[1]) }; }
 
-  setPath(to) {
-    this.path = W.findPath(this.pos, to) || [{ x: to.x, z: to.z }];
+  setPath(to, via = null) {
+    const direct = () => W.findPath(this.pos, to) || [{ x: to.x, z: to.z }];
+    if (via) {
+      const first = W.findPath(this.pos, via), second = W.findPath(via, to);
+      this.path = first && second ? first.concat(second) : direct();
+    } else this.path = direct();
     this.pathIdx = 0;
+  }
+
+  // What to do once a fight or a search is over.
+  resume() {
+    const g = this.game;
+    this.path = null;
+    if (this.team === 'CT') this.state = g.bomb.planted ? 'toBomb' : 'goto';
+    else if (g.bomb.planted) this.state = 'postplant';
+    else if (g.bomb.dropped && g.bomb.fetcher === this) this.state = 'fetchBomb';
+    else this.state = 'rush';
   }
   follow() {
     if (!this.path) return null;
@@ -160,7 +202,7 @@ export class Bot {
   // Ray against head/body/legs boxes. Returns { t, part } or null.
   raycast(O, D, maxT) {
     if (!this.alive) return null;
-    const p = this.pos, y = p.y - (this.state === 'defuse' ? 0.35 : 0);
+    const p = this.pos, y = p.y - (this.state === 'defuse' || this.state === 'plant' ? 0.35 : 0);
     let best = null;
     const boxes = [
       ['head', [p.x - 0.16, y + 1.55, p.z - 0.16], [p.x + 0.16, y + 1.93, p.z + 0.16]],
@@ -213,7 +255,7 @@ export class Bot {
       this.game.onBotDied(this);
       return true;
     }
-    if (this.state !== 'engage' && this.state !== 'defuse') {
+    if (this.state !== 'engage' && this.state !== 'defuse' && this.state !== 'plant') {
       const toward = yawTo(from.x - this.pos.x, from.z - this.pos.z);
       this.yaw += angleDiff(toward, this.yaw) * 0.6;
       this.investigate(from, 3);
@@ -238,6 +280,7 @@ export class Bot {
     if (p.crouching) chance *= 0.85;
     if (this.strafeDir) chance *= 0.85;
     if (this.shotsAt === 1) chance *= 0.7;
+    if (this.team === 'T') chance *= 0.8; // one-handed, sideways grip
     let end;
     if (Math.random() < chance) {
       const head = Math.random() < diff.hs;
@@ -321,7 +364,7 @@ export class Bot {
           this.lookT -= dt;
           if (this.lookT <= 0) this.lookYaw = null;
         } else faceYaw = this.watchYaw + Math.sin(g.time * 0.6 + this.seed * 10) * 0.45;
-        if (this.state === 'guard' && g.bomb.planted && (!g.bomb.defuser || !g.bomb.defuser.alive)) {
+        if (this.team === 'CT' && this.state === 'guard' && g.bomb.planted && (!g.bomb.defuser || !g.bomb.defuser.alive)) {
           this.state = 'toBomb';
           this.path = null;
         }
@@ -347,10 +390,8 @@ export class Bot {
           else if (this.reaction <= 0 && err < 0.12 && this.fireCd <= 0 && this.reloadT <= 0) this.shoot();
         } else if (g.time - this.lastSeen > 1.2) {
           this.strafeDir = 0;
-          if (g.bomb.planted) {
-            this.state = 'toBomb';
-            this.path = null;
-          } else this.investigate(this.lastKnown, 3);
+          if (g.bomb.planted) this.resume();
+          else this.investigate(this.lastKnown, 3);
         }
         break;
       }
@@ -362,10 +403,7 @@ export class Bot {
         } else {
           this.searchT -= dt;
           faceYaw = this.yaw + 1.2 * dt * 8;
-          if (this.searchT <= 0) {
-            this.state = g.bomb.planted ? 'toBomb' : 'goto';
-            this.path = null;
-          }
+          if (this.searchT <= 0) this.resume();
         }
         break;
       }
@@ -391,6 +429,77 @@ export class Bot {
         const dir = this.follow();
         if (dir) walk(dir);
         else walk({ x: dx / d, z: dz / d });
+        break;
+      }
+      // ----- Attackers -----
+      case 'wait': {
+        faceYaw = this.watchYaw;
+        this.waitT -= dt;
+        if (this.waitT <= 0) this.resume();
+        break;
+      }
+      case 'rush': {
+        const carrier = g.bomb.carrier === this, tgt = carrier ? g.attack.plantPos : this.target;
+        if (!this.path) {
+          this.setPath(tgt, this.via);
+          this.via = null; // the detour is only taken on the first push
+        }
+        const dir = this.follow();
+        if (dir) {
+          walk(dir);
+          break;
+        }
+        const dx = tgt.x - this.pos.x, dz = tgt.z - this.pos.z, d = Math.hypot(dx, dz);
+        if (carrier && d < 0.9) {
+          this.state = 'plant';
+          this.plantT = 0;
+        } else if (carrier) walk({ x: dx / d, z: dz / d });
+        else {
+          this.state = 'hold';
+          this.watchYaw = g.attack.watchYaw;
+        }
+        break;
+      }
+      case 'plant': {
+        if (g.bomb.carrier !== this || g.bomb.planted) {
+          this.resume();
+          break;
+        }
+        this.plantT += dt;
+        if (this.plantT >= PLANT_TIME) g.botPlanted(this);
+        break;
+      }
+      case 'fetchBomb': {
+        if (!g.bomb.dropped) {
+          this.resume();
+          break;
+        }
+        const b = g.bomb.pos, dx = b.x - this.pos.x, dz = b.z - this.pos.z, d = Math.hypot(dx, dz);
+        if (d < 1.2) {
+          g.botPickedUpBomb(this);
+          this.resume();
+          break;
+        }
+        if (!this.path) this.setPath(b);
+        const dir = this.follow();
+        walk(dir || { x: dx / d, z: dz / d });
+        break;
+      }
+      case 'postplant': {
+        if (!g.bomb.planted) {
+          this.state = 'hold';
+          break;
+        }
+        if (!this.guardPos) this.guardPos = g.guardSpot(this);
+        if (!this.path) this.setPath(this.guardPos);
+        const dir = this.follow();
+        if (dir) walk(dir);
+        else {
+          // Stand guard facing away from the bomb, toward where a defuser would come from.
+          this.state = 'guard';
+          const b = g.bomb.pos;
+          this.watchYaw = yawTo(this.pos.x - b.x, this.pos.z - b.z);
+        }
         break;
       }
       case 'defuse': {
@@ -467,11 +576,18 @@ export class Bot {
     this.recoil = Math.max(0, this.recoil - dt * 8);
     this.walkPhase += dt * speed * 2.4;
     const swing = Math.sin(this.walkPhase) * 0.6 * Math.min(1, speed / 4);
-    const kneel = this.state === 'defuse';
+    const kneel = this.state === 'defuse' || this.state === 'plant';
+    m.pack.visible = this.game.bomb.carrier === this;
     m.legL.rotation.x = kneel ? -1.3 : swing;
     m.legR.rotation.x = kneel ? 0.2 : -swing;
     m.body.position.y = kneel ? -0.35 : Math.abs(Math.sin(this.walkPhase)) * 0.04 * Math.min(1, speed / 4);
     m.gun.position.z = m.gunZ + this.recoil * 0.06;
+    if (this.team === 'T') {
+      // A loose one-handed grip: the gun wobbles while held and the muzzle flips up when it fires.
+      const t = this.game.time + this.seed * 10;
+      m.gun.rotation.x = this.recoil * 0.8 + Math.sin(t * 2.3) * 0.05;
+      m.gun.rotation.y = -0.2 + Math.sin(t * 3.1) * 0.08;
+    }
     m.root.position.copy(this.pos);
     m.root.rotation.set(0, this.yaw, 0);
   }
