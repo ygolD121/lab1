@@ -13,6 +13,7 @@ const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
 const ROUND_TIME = 115, FREEZE_TIME = 7, BOMB_TIME = 40, PLANT_TIME = 3.2, ROUNDS_TO_WIN = 5;
 const BUY_TIME = 20, DRAW_TIME = 0.4;
+const IDLE_TIME = 5, WHATSAPP_EVERY = 20;
 const EYE = 1.68, CROUCH_EYE = 1.15;
 const lerp = THREE.MathUtils.lerp, clamp = THREE.MathUtils.clamp;
 const yawTo = (dx, dz) => Math.atan2(-dx, -dz);
@@ -105,7 +106,7 @@ const player = {
   hp: 100, alive: true, onGround: true, crouching: false, eyeH: EYE,
   slots: { primary: null, pistol: null }, cur: 'pistol', prev: 'primary', armor: 0, money: 0, drawT: 0,
   reloading: false, reloadT: 0, lastShot: -1, bloom: 0,
-  hasBomb: true, planting: false, plantT: 0, keyT: 0, inSite: false, stepT: 0, deathT: 0,
+  hasBomb: true, planting: false, plantT: 0, keyT: 0, inSite: false, stepT: 0, deathT: 0, idleT: 0,
   eyePos() { return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeH, this.pos.z); },
   chestPos() { return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeH - 0.45, this.pos.z); },
   horizSpeed() { return Math.hypot(this.vel.x, this.vel.z); },
@@ -401,6 +402,7 @@ function startMatch() {
   game.scoreT = game.scoreCT = game.round = game.lossStreak = 0;
   player.money = game.econ.start;
   player.alive = false; // so startRound hands out the starting loadout
+  game.whatsappT = 0;
   game.stats = { kills: 0, deaths: 0, hs: 0 };
   game.botNames = shuffle(NAMES.slice()).slice(0, settings.bots);
   game.botStats = Object.fromEntries(game.botNames.map((n) => [n, { kills: 0, deaths: 0 }]));
@@ -437,7 +439,7 @@ function startRound() {
   p.vel.set(0, 0, 0);
   Object.assign(p, {
     yaw: 0, pitch: 0, punchP: 0, punchY: 0, hp: 100, alive: true, onGround: true, crouching: false, eyeH: EYE,
-    reloading: false, bloom: 0, drawT: 0, hasBomb: true, planting: false, plantT: 0, deathT: 0,
+    reloading: false, bloom: 0, drawT: 0, hasBomb: true, planting: false, plantT: 0, deathT: 0, idleT: 0,
   });
   Object.assign(game.bomb, { planted: false, defuser: null, timer: 0 });
   bombMesh.visible = false;
@@ -611,6 +613,7 @@ function explode() {
       p.deathT = 0;
       game.stats.deaths++;
       killfeed('The bomb', 'You', false);
+      playWhatsapp();
     }
   }
   for (const o of game.bots) {
@@ -653,6 +656,7 @@ function damagePlayer(dmg, bot, head) {
     p.planting = false;
     p.reloading = false;
     game.stats.deaths++;
+    playWhatsapp();
     game.botStats[bot.name].kills++;
     killfeed(bot.name, 'You', head, bot.weapon.name);
     voice.say('died', 'urgent');
@@ -1055,6 +1059,12 @@ function updatePlayer(dt) {
     }
   } else p.stepT = Math.min(p.stepT, 0.1);
 
+  // Standing still for 5 seconds during a live round plays the "move" clip (not while planting).
+  if (game.phase === 'live' && !p.planting && hs < 0.3 && p.onGround) {
+    p.idleT += dt;
+    if (p.idleT >= IDLE_TIME) p.idleT = -audio.moveClip();
+  } else p.idleT = Math.min(p.idleT, 0);
+
   game.shake = Math.max(0, game.shake - dt * 1.2);
   const sh = game.shake * game.shake * 0.03;
   camera.position.set(p.pos.x, p.pos.y + p.eyeH, p.pos.z);
@@ -1088,8 +1098,16 @@ function updateBomb(dt) {
   if (b.timer <= 0) explode();
 }
 
+// Restarting the 20-second timer on every play keeps a death clip and a timed clip from overlapping.
+function playWhatsapp() {
+  game.whatsappT = 0;
+  audio.whatsapp();
+}
+
 function update(dt) {
   game.time += dt;
+  game.whatsappT += dt;
+  if (game.whatsappT >= WHATSAPP_EVERY) playWhatsapp();
   if (game.phase === 'freeze') {
     game.phaseT -= dt;
     if (game.phaseT <= 0) game.phase = 'live';

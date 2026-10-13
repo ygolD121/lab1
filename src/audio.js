@@ -1,5 +1,5 @@
 // Sounds are synthesized with WebAudio, except the gunshot, which plays assets/gunshot.wav.
-let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null;
+let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null, moveSample = null, whatsappSample = null;
 
 async function loadSample(url) {
   try {
@@ -65,6 +65,8 @@ export const audio = {
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     loadSample('assets/gunshot.wav?v=2').then((b) => { shotSample = b; });
+    loadSample('assets/move.wav?v=1').then((b) => { moveSample = b; });
+    loadSample('assets/whatsapp.wav?v=1').then((b) => { whatsappSample = b; });
   },
   setVolume(v) {
     volume = v;
@@ -95,6 +97,23 @@ export const audio = {
     noiseBurst(o, t, 0.05, { type: 'highpass', from: 3000, to: 2000, gain: 0.6 * (1 - distant) });
     tone(o, t, freq, len * 0.9, { to: freq * 0.26, gain });
     if (distant > 0.3) noiseBurst(o, t + 0.08, 0.5, { from: 900, to: 120, gain: 0.25 });
+  },
+  // Voice clip nagging the player to get moving; returns its length so it isn't replayed over itself.
+  moveClip() {
+    if (!ctx || !moveSample) return 0;
+    const src = ctx.createBufferSource();
+    src.buffer = moveSample;
+    src.connect(out(1.1));
+    src.start();
+    return moveSample.duration;
+  },
+  // WhatsApp voice clip: every 20 seconds of play and when the player dies.
+  whatsapp() {
+    if (!ctx || !whatsappSample) return;
+    const src = ctx.createBufferSource();
+    src.buffer = whatsappSample;
+    src.connect(out(1.1));
+    src.start();
   },
   dryFire() {
     if (!ctx) return;
