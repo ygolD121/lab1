@@ -2,7 +2,7 @@
 
 A tactical first-person shooter that runs entirely in the browser: no backend, no database, no API keys.
 
-**Version:** 1.0 (in-game build 6)
+**Version:** 1.0 (in-game build 7)
 
 **Play:** https://ygold121.github.io/lab1/
 

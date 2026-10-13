@@ -1,14 +1,14 @@
 // Just Shoot It — game loop, player, rounds, bomb and HUD.
 import * as THREE from 'three';
-import * as W from './world.js?v=6';
-import { Bot, DIFFICULTY, NAMES } from './bots.js?v=6';
-import { audio } from './audio.js?v=6';
-import { voice, LINES } from './voice.js?v=6';
-import { createViewModel } from './viewmodel.js?v=6';
-import { createFx } from './fx.js?v=6';
-import { createPickups } from './pickups.js?v=6';
-import * as TX from './textures.js?v=6';
-import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=6';
+import * as W from './world.js?v=7';
+import { Bot, DIFFICULTY, NAMES } from './bots.js?v=7';
+import { audio } from './audio.js?v=7';
+import { voice, LINES } from './voice.js?v=7';
+import { createViewModel } from './viewmodel.js?v=7';
+import { createFx } from './fx.js?v=7';
+import { createPickups } from './pickups.js?v=7';
+import * as TX from './textures.js?v=7';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=7';
 
 const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;

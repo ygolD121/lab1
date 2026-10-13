@@ -1,7 +1,7 @@
 // Maps are grids of cells; walls are solid columns, props are axis-aligned boxes.
 // Each map in MAPS carves its layout, places props, and names its zones and defender spots.
 import * as THREE from 'three';
-import * as TX from './textures.js?v=6';
+import * as TX from './textures.js?v=7';
 
 export const CELL = 4, GW = 30, GH = 30;
 export const WALL = 0, FLOOR = 1, SITE_A = 2, SITE_B = 3, T_SPAWN = 4, CT_SPAWN = 5;
