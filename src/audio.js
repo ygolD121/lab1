@@ -62,12 +62,13 @@ export const audio = {
   },
   get ready() { return !!ctx; },
 
-  gunshot(vol = 1, pan = 0, distant = 0) {
+  // freq/len/gain shape each weapon: low and long for the AWP, short and bright for the MP5.
+  gunshot(vol = 1, pan = 0, distant = 0, { freq = 170, len = 0.16, gain = 0.9 } = {}) {
     if (!ctx) return;
     const t = ctx.currentTime, o = out(vol, pan);
-    noiseBurst(o, t, 0.16 + distant * 0.25, { from: 7000 - distant * 5000, to: 350, gain: 1 });
+    noiseBurst(o, t, len + distant * 0.25, { from: 7000 - distant * 5000, to: 350, gain: 1 });
     noiseBurst(o, t, 0.05, { type: 'highpass', from: 3000, to: 2000, gain: 0.6 * (1 - distant) });
-    tone(o, t, 170, 0.14, { to: 45, gain: 0.9 });
+    tone(o, t, freq, len * 0.9, { to: freq * 0.26, gain });
     if (distant > 0.3) noiseBurst(o, t + 0.08, 0.5, { from: 900, to: 120, gain: 0.25 });
   },
   dryFire() {
@@ -150,6 +151,12 @@ export const audio = {
     const t = ctx.currentTime, o = out(0.3);
     const notes = win ? [392, 494, 587, 784] : [392, 370, 311, 262];
     notes.forEach((f, i) => tone(o, t + i * 0.13, f, 0.35, { type: 'triangle', gain: 0.4 }));
+  },
+  buy() {
+    if (!ctx) return;
+    const t = ctx.currentTime, o = out(0.3);
+    tone(o, t, 1320, 0.08, { type: 'triangle', gain: 0.4 });
+    tone(o, t + 0.07, 1760, 0.14, { type: 'triangle', gain: 0.4 });
   },
   ui() {
     if (!ctx) return;

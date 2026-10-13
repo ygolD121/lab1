@@ -189,6 +189,48 @@
     #scoreboard td { padding: 5px 8px; border-top: 1px solid rgba(242,239,228,0.1); }
     #scoreboard tr.me td { color: var(--orange); }
     #scoreboard tr.dead td { opacity: 0.45; }
+
+    /* ---------- Money, armor, weapon slots ---------- */
+    #money { position: absolute; left: 18px; bottom: 86px; font-family: 'Black Ops One', Impact, sans-serif; font-size: 28px; color: var(--green); background: var(--panel); padding: 4px 14px 2px; }
+    #bomb-icon { bottom: 130px; }
+    #money-pops { position: absolute; left: 18px; bottom: 126px; display: flex; flex-direction: column-reverse; gap: 2px; }
+    .money-pop { color: var(--green); font-weight: 700; font-size: 17px; letter-spacing: 0.04em; animation: pop 2.6s ease-out forwards; }
+    @keyframes pop { 0% { opacity: 0; transform: translateY(6px); } 10%, 75% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-10px); } }
+    #armor { position: absolute; left: 178px; bottom: 20px; background: var(--panel); padding: 6px 14px 4px; display: flex; align-items: center; gap: 8px; }
+    #armor svg { width: 22px; height: 22px; fill: var(--ct); }
+    #armor-val { font-family: 'Black Ops One', Impact, sans-serif; font-size: 30px; line-height: 1.2; color: var(--ct); }
+    #slots { position: absolute; right: 18px; bottom: 82px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+    #slots div { background: var(--panel); padding: 2px 10px; font-weight: 700; font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; display: flex; gap: 8px; align-items: center; }
+    #slots div.on { opacity: 1; color: var(--orange); }
+
+    /* ---------- AWP scope ---------- */
+    #scope { position: absolute; inset: 0; display: none; background: radial-gradient(circle at center, transparent 0 min(38vh, 38vw), #000 calc(min(38vh, 38vw) + 1px)); }
+    #scope.show { display: block; }
+    #scope::before, #scope::after { content: ''; position: absolute; background: #000; }
+    #scope::before { left: 0; right: 0; top: 50%; height: 1px; }
+    #scope::after { top: 0; bottom: 0; left: 50%; width: 1px; }
+
+    /* ---------- Buy menu ---------- */
+    #shop { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 32px)); background: rgba(10,14,9,0.9); border-top: 3px solid var(--orange); padding: 16px 18px 12px; backdrop-filter: blur(4px); }
+    .shop-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+    .shop-head h3 { margin: 0; font-family: 'Black Ops One', Impact, sans-serif; font-weight: 400; letter-spacing: 0.08em; font-size: 22px; flex: 1; }
+    #shop-money { font-family: 'Black Ops One', Impact, sans-serif; font-size: 24px; color: var(--green); }
+    #shop-time { font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.7; }
+    #shop-items { display: grid; gap: 4px; }
+    .shop-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; padding: 7px 12px; background: rgba(242,239,228,0.06); border-left: 3px solid transparent; }
+    .shop-item kbd { font-size: 15px; }
+    .si-name { font-size: 20px; font-weight: 700; letter-spacing: 0.04em; }
+    .si-name small { margin-left: 8px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.55; }
+    .si-name span { display: block; font-size: 14px; font-weight: 500; opacity: 0.7; }
+    .si-price { font-family: 'Black Ops One', Impact, sans-serif; font-size: 20px; color: var(--green); }
+    .shop-item.poor .si-price { color: var(--red); }
+    .shop-item.poor { opacity: 0.55; }
+    .shop-item.owned { border-left-color: var(--orange); }
+    .shop-item.owned .si-price { color: var(--orange); font-family: inherit; font-weight: 700; letter-spacing: 0.15em; font-size: 15px; }
+    .shop-item.deny { animation: deny .3s; }
+    @keyframes deny { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+    .shop-foot { margin-top: 10px; font-size: 14px; letter-spacing: 0.08em; opacity: 0.7; text-align: center; }
+    .diff-note { grid-column: 2; margin-top: -6px; font-size: 15px; color: rgba(242,239,228,0.7); line-height: 1.3; }
   </style>
 </head>
 <body>
@@ -206,7 +248,7 @@
     <div class="menu-inner">
       <h1 class="logo">JUST<br>SH<svg class="xo" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="31" fill="none" stroke="currentColor" stroke-width="12"/><path d="M50 0v28M50 72v28M0 50h28M72 50h28" stroke="currentColor" stroke-width="10"/><circle cx="50" cy="50" r="5" fill="currentColor"/></svg>OT <span class="it">IT</span></h1>
       <div class="tagline">Plant it. Defend it. Just shoot it.</div>
-      <div class="mapname">Map: <b>de_timberline</b>, a classic layout lost in the woods · Weapon: <b>Glock-19</b></div>
+      <div class="mapname">Map: <b>de_timberline</b>, a classic layout lost in the woods · Start with a <b>Glock-19</b>, earn cash, buy up</div>
       <button id="play" class="btn">▶ DEPLOY</button>
       <div class="touch-note">This game needs a keyboard and mouse.</div>
       <div class="settings">
@@ -215,6 +257,7 @@
           <div class="seg" id="opt-difficulty">
             <button data-v="easy">Easy</button><button data-v="normal">Normal</button><button data-v="hard">Hard</button>
           </div>
+          <div class="diff-note" id="diff-note"></div>
         </div>
         <div class="row">
           <label>Defenders</label>
@@ -240,6 +283,8 @@
         <dt>Right click</dt><dd>Aim down sights (hold)</dd>
         <dt><kbd>E</kbd> (hold)</dt><dd>Plant the bomb at A or B</dd>
         <dt><kbd>R</kbd></dt><dd>Reload</dd>
+        <dt><kbd>B</kbd></dt><dd>Buy menu (round start, in spawn)</dd>
+        <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>Q</kbd></dt><dd>Primary / pistol / last weapon</dd>
         <dt><kbd>Space</kbd></dt><dd>Jump</dd>
         <dt><kbd>Shift</kbd></dt><dd>Walk quietly</dd>
         <dt><kbd>C</kbd></dt><dd>Crouch</dd>
@@ -284,6 +329,7 @@
     <div id="dmg-vignette"></div>
     <div id="low-hp"></div>
     <div id="dmg-dirs"></div>
+    <div id="scope"></div>
     <div id="crosshair"><i class="l"></i><i class="r"></i><i class="t"></i><i class="b"></i><span class="dot"></span></div>
     <div id="hitmarker"></div>
     <div id="death-msg"></div>
@@ -291,12 +337,21 @@
     <div id="center-msg"></div>
     <div id="progress"><div id="progress-label">PLANTING</div><div class="bar"><div id="progress-fill"></div></div></div>
     <div id="bomb-icon">◼ BOMB</div>
+    <div id="money-pops"></div>
+    <div id="money">$800</div>
+    <div id="armor" class="hidden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/></svg><span id="armor-val">100</span></div>
+    <div id="slots"></div>
     <div id="health"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2h6v7h7v6h-7v7H9v-7H2V9h7z"/></svg><span id="hp">100</span></div>
-    <div id="ammo"><span id="ammo-mag">15</span><span class="sep">/</span><span id="ammo-res">90</span><span class="wname">GLOCK-19</span></div>
+    <div id="ammo"><span id="ammo-mag">15</span><span class="sep">/</span><span id="ammo-res">90</span><span class="wname" id="wname">GLOCK-19</span></div>
     <div id="brand-mark">JUST SHOOT <b>IT</b></div>
     <div id="scoreboard">
       <h3>JUST SHOOT IT · de_timberline</h3>
-      <table><thead><tr><th>Player</th><th>Team</th><th>K</th><th>D</th><th>Status</th></tr></thead><tbody id="sb-body"></tbody></table>
+      <table><thead><tr><th>Player</th><th>Weapon</th><th>Money</th><th>K</th><th>D</th><th>Status</th></tr></thead><tbody id="sb-body"></tbody></table>
+    </div>
+    <div id="shop" class="hidden">
+      <div class="shop-head"><h3>BUY MENU</h3><span id="shop-time"></span><span id="shop-money">$800</span></div>
+      <div id="shop-items"></div>
+      <div class="shop-foot">Press a number to buy · <kbd>B</kbd> to close · dying loses your guns and armor</div>
     </div>
   </div>
 

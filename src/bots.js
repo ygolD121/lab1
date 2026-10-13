@@ -1,6 +1,7 @@
 // Defender bots: hold sites, react to sightings and gunfire, fight, and defuse the bomb.
 import * as THREE from 'three';
 import * as W from './world.js';
+import { WEAPONS } from './weapons.js';
 
 export const NAMES = ['Ash', 'Birch', 'Cedar', 'Elm', 'Fir', 'Hazel', 'Maple', 'Oak', 'Pine', 'Rowan', 'Willow', 'Yew', 'Alder', 'Larch', 'Spruce'];
 
@@ -84,14 +85,23 @@ function buildModel() {
 }
 
 export class Bot {
-  constructor(game, name, spawn, spot) {
+  constructor(game, name, spawn, spot, loadout = { weapon: 'glock', armor: false }) {
     this.game = game;
     this.name = name;
     this.pos = new THREE.Vector3(spawn.x, 0, spawn.z);
     this.vel = new THREE.Vector3();
     this.yaw = Math.PI;
+    this.weaponId = loadout.weapon;
+    this.weapon = WEAPONS[loadout.weapon];
+    this.armor = loadout.armor;
     this.model = buildModel();
-    game.scene.add(this.model.root);
+    // Stretch the gun forward from the hands to match the weapon's length.
+    const len = this.weapon.bot.len, m = this.model;
+    m.gunZ = -0.49 - 0.11 * len;
+    m.gun.scale.z = len;
+    m.gun.position.z = m.gunZ;
+    this.muzzleZ = m.gunZ - 0.11 * len - 0.03;
+    game.scene.add(m.root);
     this.spot = spot;
     this.watchYaw = yawTo(W.C(spot.look[0]) - W.C(spot.cell[0]), W.C(spot.look[1]) - W.C(spot.cell[1]));
     this.hp = 100;
@@ -103,7 +113,7 @@ export class Bot {
     this.spotted = false;
     this.reaction = 0;
     this.fireCd = 0;
-    this.ammo = 15;
+    this.ammo = this.weapon.mag;
     this.reloadT = 0;
     this.lastKnown = new THREE.Vector3();
     this.lastSeen = -99;
@@ -127,7 +137,7 @@ export class Bot {
 
   eye() { return new THREE.Vector3(this.pos.x, this.pos.y + 1.68, this.pos.z); }
   muzzle() {
-    return new THREE.Vector3(0.04, 1.43, -0.74).applyAxisAngle(UP, this.yaw).add(this.pos);
+    return new THREE.Vector3(0.04, 1.43, this.muzzleZ).applyAxisAngle(UP, this.yaw).add(this.pos);
   }
   spotPos() { return { x: W.C(this.spot.cell[0]), z: W.C(this.spot.cell[1]) }; }
 
@@ -212,14 +222,14 @@ export class Bot {
   }
 
   shoot() {
-    const g = this.game, p = g.player, diff = g.diff;
+    const g = this.game, p = g.player, diff = g.diff, wb = this.weapon.bot;
     this.ammo--;
-    this.fireCd = rand(...diff.fire);
+    this.fireCd = rand(...diff.fire) * wb.fire;
     this.shotsAt++;
     this.recoil = 1;
     this.lastShotTime = g.time;
     const muzzle = this.muzzle(), chest = p.chestPos(), dist = muzzle.distanceTo(chest);
-    let chance = diff.acc * THREE.MathUtils.clamp(1.2 - dist / 55, 0.12, 1);
+    let chance = Math.min(0.95, diff.acc * wb.acc) * THREE.MathUtils.clamp(1.2 - dist / 55, 0.12, 1);
     const ps = p.horizSpeed();
     if (ps > 3.5) chance *= 0.6;
     else if (ps > 1.2) chance *= 0.8;
@@ -231,7 +241,7 @@ export class Bot {
     if (Math.random() < chance) {
       const head = Math.random() < diff.hs;
       end = head ? p.eyePos() : chest.clone().add(new THREE.Vector3(rand(-0.15, 0.15), rand(-0.2, 0.2), rand(-0.15, 0.15)));
-      g.damagePlayer(head ? Math.round(rand(60, 75)) : Math.round(rand(16, 24)), this, head);
+      g.damagePlayer(Math.round(head ? rand(...wb.head) : rand(...wb.body)), this, head);
     } else {
       const off = new THREE.Vector3(rand(-1, 1), rand(-0.6, 1), rand(-1, 1)).normalize().multiplyScalar(rand(0.5, 1.7));
       const dir = chest.clone().add(off).sub(muzzle).normalize();
@@ -242,7 +252,7 @@ export class Bot {
     }
     g.fx.tracer(muzzle, end, 0xffd890, 0.55);
     g.fx.muzzle(muzzle);
-    g.positionalSound('gunshot', muzzle);
+    g.positionalSound('gunshot', muzzle, this.weapon.sound);
   }
 
   update(dt) {
@@ -286,7 +296,7 @@ export class Bot {
     this.fireCd -= dt;
     if (this.reloadT > 0) {
       this.reloadT -= dt;
-      if (this.reloadT <= 0) this.ammo = 15;
+      if (this.reloadT <= 0) this.ammo = this.weapon.mag;
     }
 
     let mvx = 0, mvz = 0, run = 4.4, faceYaw = null;
@@ -332,7 +342,7 @@ export class Bot {
             run = 2.2;
           }
           const err = Math.abs(angleDiff(faceYaw, this.yaw));
-          if (this.ammo <= 0 && this.reloadT <= 0) this.reloadT = 2.4;
+          if (this.ammo <= 0 && this.reloadT <= 0) this.reloadT = this.weapon.reload * 1.1;
           else if (this.reaction <= 0 && err < 0.12 && this.fireCd <= 0 && this.reloadT <= 0) this.shoot();
         } else if (g.time - this.lastSeen > 1.2) {
           this.strafeDir = 0;
@@ -460,7 +470,7 @@ export class Bot {
     m.legL.rotation.x = kneel ? -1.3 : swing;
     m.legR.rotation.x = kneel ? 0.2 : -swing;
     m.body.position.y = kneel ? -0.35 : Math.abs(Math.sin(this.walkPhase)) * 0.04 * Math.min(1, speed / 4);
-    m.gun.position.z = -0.6 + this.recoil * 0.06;
+    m.gun.position.z = m.gunZ + this.recoil * 0.06;
     m.root.position.copy(this.pos);
     m.root.rotation.set(0, this.yaw, 0);
   }

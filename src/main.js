@@ -6,11 +6,12 @@ import { audio } from './audio.js';
 import { createViewModel } from './viewmodel.js';
 import { createFx } from './fx.js';
 import * as TX from './textures.js';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js';
 
 const $ = (id) => document.getElementById(id);
-const BASE_FOV = 78, ADS_FOV = 58;
-const ROUND_TIME = 115, FREEZE_TIME = 4, BOMB_TIME = 40, PLANT_TIME = 3.2, ROUNDS_TO_WIN = 5;
-const MAG = 15, RESERVE = 90, RELOAD_TIME = 2.2, FIRE_DELAY = 0.12;
+const BASE_FOV = 78;
+const ROUND_TIME = 115, FREEZE_TIME = 7, BOMB_TIME = 40, PLANT_TIME = 3.2, ROUNDS_TO_WIN = 5;
+const BUY_TIME = 20, DRAW_TIME = 0.4;
 const EYE = 1.68, CROUCH_EYE = 1.15;
 const lerp = THREE.MathUtils.lerp, clamp = THREE.MathUtils.clamp;
 const yawTo = (dx, dz) => Math.atan2(-dx, -dz);
@@ -99,7 +100,8 @@ const bombMesh = (() => {
 const player = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: 0, punchP: 0, punchY: 0,
   hp: 100, alive: true, onGround: true, crouching: false, eyeH: EYE,
-  ammo: MAG, reserve: RESERVE, reloading: false, reloadT: 0, lastShot: -1, bloom: 0,
+  slots: { primary: null, pistol: null }, cur: 'pistol', prev: 'primary', armor: 0, money: 0, drawT: 0,
+  reloading: false, reloadT: 0, lastShot: -1, bloom: 0,
   hasBomb: true, planting: false, plantT: 0, keyT: 0, inSite: false, stepT: 0, deathT: 0,
   eyePos() { return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeH, this.pos.z); },
   chestPos() { return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeH - 0.45, this.pos.z); },
@@ -110,14 +112,123 @@ const game = {
   scene, player, fx, bots: [],
   bomb: { planted: false, pos: new THREE.Vector3(), timer: 0, beepT: 0, ledT: 0, defuser: null, defuseSoundT: 0, site: '' },
   state: 'menu', phase: 'freeze', phaseT: 0, roundTime: ROUND_TIME, round: 0, scoreT: 0, scoreCT: 0, time: 0,
-  diff: DIFFICULTY.normal, lastCallout: -99, shake: 0,
+  diff: DIFFICULTY.normal, econ: ECONOMY.normal, lossStreak: 0, lastCallout: -99, shake: 0,
   stats: { kills: 0, deaths: 0, hs: 0 }, botNames: [], botStats: {},
   damagePlayer, onBotSpotted, onDefuseStart, bombDefused, nearMiss, positionalSound,
 };
 
+// ---------- Weapons ----------
+const newGun = (id) => ({ id, ammo: WEAPONS[id].mag, reserve: WEAPONS[id].reserve });
+const held = () => player.slots[player.cur];
+const heldDef = () => WEAPONS[held().id];
+const money = (n) => `$${n.toLocaleString('en-US')}`;
+player.slots.pistol = newGun('glock');
+
+function equip(slot) {
+  const p = player;
+  if (slot !== p.cur) p.prev = p.cur;
+  p.cur = slot;
+  p.reloading = false;
+  p.bloom = 0;
+  p.drawT = DRAW_TIME;
+  vm.setWeapon(held().id);
+}
+
+function switchTo(slot) {
+  const p = player;
+  if (!p.alive || p.planting || slot === p.cur || !p.slots[slot]) return;
+  equip(slot);
+}
+
+// ---------- Money & buy menu ----------
+function addMoney(n, why) {
+  const p = player;
+  const gained = Math.min(n, MAX_MONEY - p.money);
+  p.money += gained;
+  const el = document.createElement('div');
+  el.className = 'money-pop';
+  el.textContent = `+${money(gained)} ${why}`;
+  $('money-pops').appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+  if (shopOpen) renderShop();
+}
+
+function buyTimeLeft() {
+  const p = player;
+  if (game.state !== 'playing' || !p.alive || game.bomb.planted) return 0;
+  if (game.phase === 'freeze') return BUY_TIME;
+  if (game.phase !== 'live' || W.cellType(p.pos.x, p.pos.z) !== W.T_SPAWN) return 0;
+  return Math.max(0, BUY_TIME - (ROUND_TIME - game.roundTime));
+}
+
+function toggleShop() {
+  if (shopOpen) closeShop();
+  else if (buyTimeLeft() > 0) {
+    shopOpen = true;
+    renderShop();
+    $('shop').classList.remove('hidden');
+    audio.ui();
+  } else flashCenter(game.phase === 'live' ? 'You can only buy in spawn, in the first 20 seconds' : 'Buy time is over');
+}
+
+function closeShop() {
+  shopOpen = false;
+  $('shop').classList.add('hidden');
+}
+
+function renderShop() {
+  const p = player;
+  setText($('shop-money'), money(p.money));
+  $('shop-items').innerHTML = SHOP.map((id, i) => {
+    const armor = id === 'armor', w = WEAPONS[id];
+    const price = armor ? ARMOR_PRICE : w.price;
+    const owned = armor ? p.armor >= 100 : p.slots[w.slot]?.id === id;
+    const stats = armor
+      ? 'Halves incoming damage · lasts until you die'
+      : `${w.dmg.body} dmg · ${w.mag}-round mag · ${w.auto ? 'full auto' : 'semi-auto'}${w.scope ? ' · scope' : ''}`;
+    const cls = owned ? 'owned' : p.money < price ? 'poor' : '';
+    return `<div class="shop-item ${cls}" data-id="${id}">
+      <kbd>${i + 1}</kbd>
+      <div class="si-name">${armor ? 'Kevlar + Helmet' : w.name}<small>${armor ? 'Equipment' : w.slot === 'pistol' ? 'Pistol · slot 2' : 'Primary · slot 1'}</small><span>${stats}</span></div>
+      <div class="si-price">${owned ? 'OWNED' : money(price)}</div>
+    </div>`;
+  }).join('');
+}
+
+function buy(id) {
+  if (!id || buyTimeLeft() <= 0) return;
+  const p = player;
+  const armor = id === 'armor', w = WEAPONS[id];
+  const price = armor ? ARMOR_PRICE : w.price;
+  const owned = armor ? p.armor >= 100 : p.slots[w.slot]?.id === id;
+  const row = $('shop-items').querySelector(`[data-id="${id}"]`);
+  if (owned || p.money < price) {
+    audio.dryFire();
+    row?.classList.remove('deny');
+    void row?.offsetWidth;
+    row?.classList.add('deny');
+    return;
+  }
+  p.money -= price;
+  if (armor) p.armor = 100;
+  else {
+    p.slots[w.slot] = newGun(id);
+    equip(w.slot);
+  }
+  audio.buy();
+  renderShop();
+}
+
+let flashT = 0, flashText = '';
+function flashCenter(text) {
+  flashText = text;
+  flashT = 2;
+}
+
 // ---------- Input ----------
 const keys = new Set();
-let adsHeld = false, lookDX = 0, lookDY = 0, locked = false, lockedAt = 0, scoreboardOpen = false;
+let adsHeld = false, fireHeld = false, lookDX = 0, lookDY = 0, locked = false, lockedAt = 0, scoreboardOpen = false;
+let shopOpen = false;
 
 function lock() {
   try {
@@ -133,18 +244,23 @@ window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Tab') scoreboardOpen = true;
+  if (e.code === 'KeyB') toggleShop();
+  else if (shopOpen && /^Digit[1-9]$/.test(e.code)) buy(SHOP[Number(e.code.slice(5)) - 1]);
+  else if (e.code === 'Digit1') switchTo('primary');
+  else if (e.code === 'Digit2') switchTo('pistol');
+  else if (e.code === 'KeyQ') switchTo(player.prev);
 });
 window.addEventListener('keyup', (e) => {
   keys.delete(e.code);
   if (e.code === 'Tab') scoreboardOpen = false;
 });
-window.addEventListener('blur', () => { keys.clear(); adsHeld = false; });
+window.addEventListener('blur', () => { keys.clear(); adsHeld = fireHeld = false; });
 document.addEventListener('mousemove', (e) => {
   if (!locked || game.state !== 'playing') return;
   const mx = e.movementX, my = e.movementY;
   // Browsers sometimes report a huge jump right after locking, or as a one-off spike.
   if (performance.now() - lockedAt < 150 || Math.abs(mx) > 300 || Math.abs(my) > 300) return;
-  const s = settings.sens * 0.0022 * (vm.adsAmount > 0.5 ? 0.7 : 1);
+  const s = settings.sens * 0.0022 * (camera.fov / BASE_FOV);
   if (player.alive) {
     player.yaw -= mx * s;
     player.pitch = clamp(player.pitch - my * s, -1.5, 1.5);
@@ -158,10 +274,20 @@ document.addEventListener('mousedown', (e) => {
     if (e.target === canvas) lock();
     return;
   }
-  if (e.button === 0) tryShoot();
+  if (e.button === 0 && shopOpen) closeShop();
+  else if (e.button === 0) {
+    fireHeld = true;
+    tryShoot();
+  }
   if (e.button === 2) adsHeld = true;
 });
-document.addEventListener('mouseup', (e) => { if (e.button === 2) adsHeld = false; });
+document.addEventListener('mouseup', (e) => {
+  if (e.button === 0) fireHeld = false;
+  if (e.button === 2) adsHeld = false;
+});
+document.addEventListener('wheel', (e) => {
+  if (game.state === 'playing' && locked && !shopOpen) switchTo(player.cur === 'pistol' ? 'primary' : 'pistol');
+}, { passive: true });
 document.addEventListener('contextmenu', (e) => { if (game.state === 'playing') e.preventDefault(); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
@@ -182,8 +308,9 @@ function setState(s) {
   $('hud').classList.toggle('hidden', s !== 'playing' && s !== 'paused');
   if (s !== 'playing') {
     keys.clear();
-    adsHeld = false;
+    adsHeld = fireHeld = false;
     scoreboardOpen = false;
+    closeShop();
   }
 }
 
@@ -201,6 +328,9 @@ function bindSegment(id, key, parse = (v) => v) {
   sync();
 }
 bindSegment('opt-difficulty', 'difficulty');
+const syncDiffNote = () => { $('diff-note').textContent = (ECONOMY[settings.difficulty] || ECONOMY.normal).note; };
+$('opt-difficulty').addEventListener('click', syncDiffNote);
+syncDiffNote();
 bindSegment('opt-bots', 'bots', Number);
 for (const [key, fmt] of [['sens', (v) => v.toFixed(2)], ['volume', (v) => `${Math.round(v * 100)}%`]]) {
   for (const el of document.querySelectorAll(`[data-setting="${key}"]`)) {
@@ -247,7 +377,10 @@ function toMenu() {
 // ---------- Match & rounds ----------
 function startMatch() {
   game.diff = DIFFICULTY[settings.difficulty] || DIFFICULTY.normal;
-  game.scoreT = game.scoreCT = game.round = 0;
+  game.econ = ECONOMY[settings.difficulty] || ECONOMY.normal;
+  game.scoreT = game.scoreCT = game.round = game.lossStreak = 0;
+  player.money = game.econ.start;
+  player.alive = false; // so startRound hands out the starting loadout
   game.stats = { kills: 0, deaths: 0, hs: 0 };
   game.botNames = shuffle(NAMES.slice()).slice(0, settings.bots);
   game.botStats = Object.fromEntries(game.botNames.map((n) => [n, { kills: 0, deaths: 0 }]));
@@ -262,19 +395,28 @@ function startRound() {
   fx.clear();
   const spawns = shuffle(W.cellsOfType(W.CT_SPAWN));
   const spots = shuffle(W.SPOTS.slice());
+  const loadouts = botLoadouts(settings.difficulty, game.round, game.botNames.length);
   game.bots = game.botNames.map((name, i) => {
     const [cx, cz] = spawns[i % spawns.length];
-    return new Bot(game, name, { x: W.C(cx) + (Math.random() - 0.5) * 1.5, z: W.C(cz) + (Math.random() - 0.5) * 1.5 }, spots[i % spots.length]);
+    return new Bot(game, name, { x: W.C(cx) + (Math.random() - 0.5) * 1.5, z: W.C(cz) + (Math.random() - 0.5) * 1.5 }, spots[i % spots.length], loadouts[i]);
   });
 
   const p = player;
+  // Survivors keep their guns and armor; the dead start over with a Glock. Ammo refills either way.
+  if (!p.alive) {
+    p.slots = { primary: null, pistol: newGun('glock') };
+    p.armor = 0;
+  }
+  for (const g of Object.values(p.slots)) if (g) Object.assign(g, newGun(g.id));
+  p.cur = p.slots.primary ? 'primary' : 'pistol';
+  p.prev = p.cur === 'primary' ? 'pistol' : 'primary';
   const tCells = W.cellsOfType(W.T_SPAWN).filter(([, z]) => z >= 26);
   const [sx, sz] = tCells[(Math.random() * tCells.length) | 0];
   p.pos.set(W.C(sx), 0, W.C(sz));
   p.vel.set(0, 0, 0);
   Object.assign(p, {
     yaw: 0, pitch: 0, punchP: 0, punchY: 0, hp: 100, alive: true, onGround: true, crouching: false, eyeH: EYE,
-    ammo: MAG, reserve: RESERVE, reloading: false, bloom: 0, hasBomb: true, planting: false, plantT: 0, deathT: 0,
+    reloading: false, bloom: 0, drawT: 0, hasBomb: true, planting: false, plantT: 0, deathT: 0,
   });
   Object.assign(game.bomb, { planted: false, defuser: null, timer: 0 });
   bombMesh.visible = false;
@@ -282,18 +424,26 @@ function startRound() {
   game.phaseT = FREEZE_TIME;
   game.roundTime = ROUND_TIME;
   game.shake = 0;
-  vm.draw();
+  vm.setWeapon(held().id);
   $('death-msg').classList.remove('show');
-  banner(`ROUND ${game.round}`, 'Plant the bomb at A or B, or eliminate every defender', 2.6);
+  banner(`ROUND ${game.round}`, 'Press B to buy weapons · plant the bomb at A or B, or eliminate every defender', 2.6);
 }
 
 function endRound(winner, reason) {
   if (game.phase === 'over') return;
   game.phase = 'over';
   game.phaseT = 5;
-  if (winner === 'T') game.scoreT++;
-  else game.scoreCT++;
+  if (winner === 'T') {
+    game.scoreT++;
+    game.lossStreak = 0;
+    addMoney(game.econ.win, 'round won');
+  } else {
+    game.scoreCT++;
+    game.lossStreak++;
+    addMoney(game.econ.loss + game.econ.lossBonus * Math.min(game.lossStreak - 1, 4), 'round lost');
+  }
   player.planting = false;
+  closeShop();
   banner(winner === 'T' ? 'ATTACKERS WIN' : 'DEFENDERS WIN', reason, 4.6, winner === 'T' ? 'win' : 'lose');
   audio.jingle(winner === 'T');
 }
@@ -316,7 +466,8 @@ function matchOver() {
 // ---------- Player actions ----------
 function currentSpread() {
   const p = player, ads = vm.adsAmount;
-  let s = lerp(0.0045, 0.0012, ads) + p.horizSpeed() * 0.0032 * (1 - ads * 0.4) + p.bloom;
+  const w = heldDef();
+  let s = lerp(w.spread[0], w.spread[1], ads) + p.horizSpeed() * w.move * (1 - ads * 0.4) + p.bloom;
   if (!p.onGround) s += 0.07;
   if (p.crouching) s *= 0.75;
   return s;
@@ -324,11 +475,12 @@ function currentSpread() {
 
 function startReload() {
   const p = player;
-  if (!p.alive || p.reloading || p.ammo >= MAG || p.reserve <= 0 || p.planting) return;
+  const g = held(), w = WEAPONS[g.id];
+  if (!p.alive || p.reloading || g.ammo >= w.mag || g.reserve <= 0 || p.planting) return;
   p.reloading = true;
-  p.reloadT = RELOAD_TIME;
-  vm.reload(RELOAD_TIME);
-  audio.reload(RELOAD_TIME);
+  p.reloadT = w.reload;
+  vm.reload(w.reload);
+  audio.reload(w.reload);
 }
 
 function makeNoise(pos, radius) {
@@ -337,14 +489,16 @@ function makeNoise(pos, radius) {
 
 function tryShoot() {
   const p = player;
-  if (!p.alive || game.phase === 'freeze' || p.planting || p.reloading) return;
-  if (game.time - p.lastShot < FIRE_DELAY) return;
-  if (p.ammo <= 0) {
-    audio.dryFire();
+  if (!p.alive || game.phase === 'freeze' || p.planting || p.reloading || shopOpen || p.drawT > 0) return;
+  const g = held(), w = WEAPONS[g.id];
+  if (game.time - p.lastShot < w.delay) return;
+  if (g.ammo <= 0) {
+    if (game.time - p.lastShot > 0.25) audio.dryFire();
+    p.lastShot = game.time;
     startReload();
     return;
   }
-  p.ammo--;
+  g.ammo--;
   p.lastShot = game.time;
   camera.updateMatrixWorld();
   const origin = camera.position.clone();
@@ -354,9 +508,9 @@ function tryShoot() {
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
   dir.addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
-  p.bloom = Math.min(0.045, p.bloom + 0.011);
-  p.punchP += vm.adsAmount > 0.5 ? 0.011 : 0.017;
-  p.punchY += (Math.random() - 0.5) * 0.008;
+  p.bloom = Math.min(w.bloomMax, p.bloom + w.bloom);
+  p.punchP += w.punch[vm.adsAmount > 0.5 ? 1 : 0];
+  p.punchY += (Math.random() - 0.5) * w.punch[0] * 0.5;
 
   const hit = W.raycastWorld(origin, dir, 250);
   const O = [origin.x, origin.y, origin.z], D = [dir.x, dir.y, dir.z];
@@ -368,21 +522,23 @@ function tryShoot() {
   const end = origin.clone().addScaledVector(dir, best ? best.t : hit.t);
   if (best) {
     const head = best.part === 'head';
-    let dmg = head ? 110 : best.part === 'body' ? 27 : 19;
-    if (best.t > 35) dmg = Math.round(dmg * 0.88);
+    let dmg = w.dmg[best.part];
+    if (best.t > 35) dmg *= w.falloff;
+    if (best.bot.armor && best.part !== 'legs') dmg *= w.pen;
+    dmg = Math.round(dmg);
     fx.blood(end, dir);
     const killed = best.bot.takeDamage(dmg, p.pos);
     showHitmarker(head, killed);
     audio.hit(head);
-    if (killed) onBotKilled(best.bot, head);
+    if (killed) onBotKilled(best.bot, head, w);
   } else if (hit.t < 250) fx.impact(end, hit.n, hit.what);
 
   const ads = vm.adsAmount;
   const muzzle = camera.localToWorld(new THREE.Vector3(lerp(0.13, 0, ads), lerp(-0.1, -0.03, ads), -0.55));
   fx.tracer(muzzle, end, 0xffe8b0, 0.3);
   fx.flashLight(muzzle);
-  audio.gunshot(0.85);
-  vm.shoot();
+  audio.gunshot(0.85, 0, 0, w.sound);
+  vm.shoot(w.kick);
   makeNoise(origin, 50);
 }
 
@@ -396,6 +552,7 @@ function plantBomb(siteType) {
   b.site = siteType === W.SITE_A ? 'A' : 'B';
   p.hasBomb = false;
   p.planting = false;
+  addMoney(game.econ.plant, 'bomb planted');
   bombMesh.position.copy(b.pos);
   bombMesh.rotation.y = p.yaw;
   bombMesh.visible = true;
@@ -442,6 +599,11 @@ function explode() {
 function damagePlayer(dmg, bot, head) {
   const p = player;
   if (!p.alive) return;
+  if (p.armor > 0) {
+    const absorbed = Math.min(Math.round(dmg * 0.5), p.armor * 2);
+    dmg -= absorbed;
+    p.armor = Math.max(0, p.armor - Math.ceil(absorbed / 2));
+  }
   p.hp -= dmg;
   audio.hurt();
   p.punchP += 0.025;
@@ -464,19 +626,20 @@ function damagePlayer(dmg, bot, head) {
     p.reloading = false;
     game.stats.deaths++;
     game.botStats[bot.name].kills++;
-    killfeed(bot.name, 'You', head);
+    killfeed(bot.name, 'You', head, bot.weapon.name);
     const dm = $('death-msg');
-    dm.innerHTML = `Killed by <b>${bot.name}</b>${head ? ' · headshot' : ''}<small>${bot.hp} HP left</small>`;
+    dm.innerHTML = `Killed by <b>${bot.name}</b> · ${bot.weapon.name}${head ? ' · headshot' : ''}<small>${bot.hp} HP left · you lose your guns and armor</small>`;
     dm.classList.add('show');
     if (!game.bomb.planted) endRound('CT', 'The attacker was eliminated');
   }
 }
 
-function onBotKilled(bot, head) {
+function onBotKilled(bot, head, w) {
   game.stats.kills++;
   if (head) game.stats.hs++;
   game.botStats[bot.name].deaths++;
-  killfeed('You', bot.name, head);
+  killfeed('You', bot.name, head, w.name);
+  addMoney(Math.round(w.reward * game.econ.killMul), `kill · ${w.name}`);
   if (game.phase === 'live' && game.bots.every((b) => !b.alive)) endRound('T', 'All defenders eliminated');
 }
 
@@ -519,10 +682,10 @@ function panFor(pos) {
   return -Math.sin(rel) * 0.8;
 }
 
-function positionalSound(type, pos) {
+function positionalSound(type, pos, sound) {
   const d = Math.hypot(pos.x - camera.position.x, pos.z - camera.position.z);
   const pan = panFor(pos);
-  if (type === 'gunshot') audio.gunshot(Math.pow(clamp(1 - d / 120, 0.06, 1), 1.3), pan, clamp(d / 60, 0, 1));
+  if (type === 'gunshot') audio.gunshot(Math.pow(clamp(1 - d / 120, 0.06, 1), 1.3), pan, clamp(d / 60, 0, 1), sound);
   else if (type === 'step') {
     const v = clamp(1 - d / 24, 0, 1) * 0.35;
     if (v > 0.01) audio.step(v, pan);
@@ -536,6 +699,8 @@ const hud = {
   scoreT: $('score-t'), scoreCT: $('score-ct'), aliveCT: $('alive-ct'), loc: $('loc'), center: $('center-msg'),
   progress: $('progress'), fill: $('progress-fill'), plabel: $('progress-label'), bombIcon: $('bomb-icon'),
   cross: $('crosshair'), low: $('low-hp'), board: $('scoreboard'), boardBody: $('sb-body'), round: $('round-no'),
+  money: $('money'), armor: $('armor'), armorVal: $('armor-val'), wname: $('wname'), slots: $('slots'),
+  scope: $('scope'), shopTime: $('shop-time'),
 };
 const setText = (el, v) => {
   if (el._v !== v) {
@@ -558,11 +723,11 @@ function banner(title, sub, dur, kind = '') {
   bannerTimer = setTimeout(() => { b.className = ''; }, dur * 1000);
 }
 
-function killfeed(killer, victim, head) {
+function killfeed(killer, victim, head, gun = '') {
   const el = document.createElement('div');
   el.className = 'kf';
   const cls = (n) => (n === 'You' ? 'me' : n === 'The bomb' ? 'bomb' : 'ct');
-  el.innerHTML = `<span class="${cls(killer)}">${killer}</span><span class="gun">${killer === 'The bomb' ? '💥' : 'GLOCK-19'}</span>${head ? '<span class="hs" title="Headshot">◉</span>' : ''}<span class="${cls(victim)}">${victim}</span>`;
+  el.innerHTML = `<span class="${cls(killer)}">${killer}</span><span class="gun">${killer === 'The bomb' ? '💥' : gun.toUpperCase()}</span>${head ? '<span class="hs" title="Headshot">◉</span>' : ''}<span class="${cls(victim)}">${victim}</span>`;
   pushFeed(el);
 }
 function radio(text) {
@@ -663,9 +828,25 @@ function updateHud(dt) {
   setText(hud.hp, String(Math.max(0, Math.ceil(p.hp))));
   hud.health.classList.toggle('low', p.hp <= 30);
   hud.low.classList.toggle('on', p.alive && p.hp <= 30);
-  setText(hud.mag, String(p.ammo));
-  setText(hud.res, String(p.reserve));
-  hud.ammo.classList.toggle('low', p.ammo <= 3);
+  const g = held(), w = WEAPONS[g.id];
+  setText(hud.mag, String(g.ammo));
+  setText(hud.res, String(g.reserve));
+  setText(hud.wname, w.name.toUpperCase());
+  hud.ammo.classList.toggle('low', g.ammo <= Math.ceil(w.mag / 5));
+  setText(hud.money, money(p.money));
+  hud.armor.classList.toggle('hidden', p.armor <= 0);
+  setText(hud.armorVal, String(p.armor));
+  const slotsKey = `${p.cur}|${p.slots.primary?.id}|${p.slots.pistol?.id}`;
+  if (hud.slots._v !== slotsKey) {
+    hud.slots._v = slotsKey;
+    hud.slots.innerHTML = [['primary', 1], ['pistol', 2]]
+      .filter(([slot]) => p.slots[slot])
+      .map(([slot, n]) => `<div class="${slot === p.cur ? 'on' : ''}"><kbd>${n}</kbd>${WEAPONS[p.slots[slot].id].name}</div>`).join('');
+  }
+  const scoped = !!w.scope && vm.adsAmount > 0.85 && p.alive;
+  hud.scope.classList.toggle('show', scoped);
+  const buyLeft = buyTimeLeft();
+  if (shopOpen) setText(hud.shopTime, game.phase === 'freeze' ? 'Buy time: round start' : `Buy time: ${Math.ceil(buyLeft)}s`);
   setText(hud.scoreT, String(game.scoreT));
   setText(hud.scoreCT, String(game.scoreCT));
   setText(hud.round, `ROUND ${game.round}`);
@@ -689,8 +870,10 @@ function updateHud(dt) {
   setText(hud.loc, W.locationName(p.pos.x, p.pos.z));
 
   let msg = '';
+  flashT -= dt;
   if (!locked && game.state === 'playing') msg = 'Click to capture the mouse';
-  else if (game.phase === 'freeze') msg = `Round starts in ${Math.ceil(game.phaseT)}`;
+  else if (flashT > 0) msg = flashText;
+  else if (game.phase === 'freeze') msg = `Round starts in ${Math.ceil(game.phaseT)}${shopOpen ? '' : ' · press B to buy'}`;
   else if (!p.alive && b.planted) msg = 'You are dead, but the bomb is still ticking…';
   else if (b.planted && b.defuser && b.defuser.alive) msg = 'The bomb is being defused!';
   else if (p.alive && p.hasBomb && p.inSite && !p.planting && game.phase === 'live') msg = 'Hold E to plant the bomb';
@@ -709,7 +892,7 @@ function updateHud(dt) {
   const gap = 3 + (Math.tan(spread) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * (window.innerHeight / 2);
   hud.cross.style.setProperty('--gap', `${gap.toFixed(1)}px`);
   hud.cross.classList.toggle('ads', vm.adsAmount > 0.6);
-  hud.cross.classList.toggle('hidden', !p.alive);
+  hud.cross.classList.toggle('hidden', !p.alive || scoped);
 
   drawRadar();
 
@@ -717,10 +900,11 @@ function updateHud(dt) {
   boardT -= dt;
   if (scoreboardOpen && boardT <= 0) {
     boardT = 0.25;
-    const rows = [`<tr class="me"><td>You</td><td>Attacker</td><td>${game.stats.kills}</td><td>${game.stats.deaths}</td><td>${p.alive ? 'Alive' : 'Dead'}</td></tr>`];
+    const gear = (name, armor) => `${name}${armor ? ' + armor' : ''}`;
+    const rows = [`<tr class="me"><td>You</td><td>${gear(w.name, p.armor > 0)}</td><td>${money(p.money)}</td><td>${game.stats.kills}</td><td>${game.stats.deaths}</td><td>${p.alive ? 'Alive' : 'Dead'}</td></tr>`];
     for (const o of game.bots) {
       const s = game.botStats[o.name];
-      rows.push(`<tr class="${o.alive ? '' : 'dead'}"><td>${o.name}</td><td>Defender</td><td>${s.kills}</td><td>${s.deaths}</td><td>${o.alive ? 'Alive' : 'Dead'}</td></tr>`);
+      rows.push(`<tr class="${o.alive ? '' : 'dead'}"><td>${o.name}</td><td>${gear(o.weapon.name, o.armor)}</td><td></td><td>${s.kills}</td><td>${s.deaths}</td><td>${o.alive ? 'Alive' : 'Dead'}</td></tr>`);
     }
     hud.boardBody.innerHTML = rows.join('');
   }
@@ -764,9 +948,10 @@ function updatePlayer(dt) {
   if (p.reloading) {
     p.reloadT -= dt;
     if (p.reloadT <= 0) {
-      const take = Math.min(MAG - p.ammo, p.reserve);
-      p.ammo += take;
-      p.reserve -= take;
+      const g = held();
+      const take = Math.min(WEAPONS[g.id].mag - g.ammo, g.reserve);
+      g.ammo += take;
+      g.reserve -= take;
       p.reloading = false;
     }
   }
@@ -776,7 +961,8 @@ function updatePlayer(dt) {
   const s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
   p.crouching = keys.has('KeyC');
   const walking = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  const speed = p.crouching ? 2.3 : walking ? 2.7 : vm.adsAmount > 0.5 ? 3.9 : 5.6;
+  const speed = (p.crouching ? 2.3 : walking ? 2.7 : vm.adsAmount > 0.5 ? 3.9 : 5.6) * heldDef().speed;
+  p.drawT = Math.max(0, p.drawT - dt);
   let wx = 0, wz = 0;
   if (canMove && (f || s)) {
     const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
@@ -877,6 +1063,8 @@ function update(dt) {
       return;
     }
   }
+  if (shopOpen && buyTimeLeft() <= 0) closeShop();
+  if (fireHeld && locked && heldDef().auto) tryShoot();
   updatePlayer(dt);
   for (const b of game.bots) b.update(dt);
   updateBomb(dt);
@@ -887,7 +1075,7 @@ function update(dt) {
     lower: player.planting,
   });
   lookDX = lookDY = 0;
-  camera.fov = lerp(BASE_FOV, ADS_FOV, vm.adsAmount);
+  camera.fov = lerp(BASE_FOV, heldDef().adsFov, vm.adsAmount);
   camera.updateProjectionMatrix();
   updateHud(dt);
 }
@@ -910,7 +1098,8 @@ function frame(now) {
   world.update(dt, now / 1000, camera.position);
   renderer.clear();
   renderer.render(scene, camera);
-  if ((game.state === 'playing' || game.state === 'paused') && player.alive) {
+  const scoped = !!heldDef().scope && vm.adsAmount > 0.85;
+  if ((game.state === 'playing' || game.state === 'paused') && player.alive && !scoped) {
     renderer.clearDepth();
     renderer.render(vm.scene, vm.camera);
   }
