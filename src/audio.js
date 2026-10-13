@@ -69,7 +69,7 @@ export const audio = {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     loadSample(`assets/gunshot.wav?v=${BUILD}`).then((b) => { shotSample = b; });
     loadSample(`assets/move.wav?v=${BUILD}`).then((b) => { moveSample = b; });
-    ['shout1', 'shout2'].forEach((name, i) => loadSample(`assets/${name}.wav?v=${BUILD}`).then((b) => { shoutSamples[i] = b; }));
+    ['shout1', 'shout2', 'shout3', 'shout4'].forEach((name, i) => loadSample(`assets/${name}.wav?v=${BUILD}`).then((b) => { shoutSamples[i] = b; }));
   },
   setVolume(v) {
     volume = v;
@@ -111,7 +111,7 @@ export const audio = {
     src.start();
     return moveSample.duration;
   },
-  // Shout clip (0 = shout1, 1 = shout2). A new shout cuts off the previous one so quick kills don't pile up.
+  // Shout clip (0–3 = shout1–shout4). A new shout cuts off the previous one so quick kills don't pile up.
   shout(which) {
     const sample = shoutSamples[which];
     if (!ctx || !sample) return;

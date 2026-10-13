@@ -1,7 +1,7 @@
 // Defender bots: hold sites, react to sightings and gunfire, fight, and defuse the bomb.
 import * as THREE from 'three';
-import * as W from './world.js?v=5';
-import { WEAPONS } from './weapons.js?v=5';
+import * as W from './world.js?v=6';
+import { WEAPONS } from './weapons.js?v=6';
 
 export const NAMES = ['Ash', 'Birch', 'Cedar', 'Elm', 'Fir', 'Hazel', 'Maple', 'Oak', 'Pine', 'Rowan', 'Willow', 'Yew', 'Alder', 'Larch', 'Spruce'];
 

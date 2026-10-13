@@ -1,14 +1,14 @@
 // Just Shoot It — game loop, player, rounds, bomb and HUD.
 import * as THREE from 'three';
-import * as W from './world.js?v=5';
-import { Bot, DIFFICULTY, NAMES } from './bots.js?v=5';
-import { audio } from './audio.js?v=5';
-import { voice, LINES } from './voice.js?v=5';
-import { createViewModel } from './viewmodel.js?v=5';
-import { createFx } from './fx.js?v=5';
-import { createPickups } from './pickups.js?v=5';
-import * as TX from './textures.js?v=5';
-import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=5';
+import * as W from './world.js?v=6';
+import { Bot, DIFFICULTY, NAMES } from './bots.js?v=6';
+import { audio } from './audio.js?v=6';
+import { voice, LINES } from './voice.js?v=6';
+import { createViewModel } from './viewmodel.js?v=6';
+import { createFx } from './fx.js?v=6';
+import { createPickups } from './pickups.js?v=6';
+import * as TX from './textures.js?v=6';
+import { WEAPONS, SHOP, ECONOMY, ARMOR_PRICE, MAX_MONEY, botLoadouts } from './weapons.js?v=6';
 
 const $ = (id) => document.getElementById(id);
 const BASE_FOV = 78;
@@ -695,10 +695,11 @@ function damagePlayer(dmg, bot, head) {
   }
 }
 
-// Your death always plays shout1 or shout2 (50/50). A defender you kill gets shout1, shout2 or silence, one in three each.
+// Your death always plays one of the four shouts; a defender you kill gets one a third of the time.
+// Either way each of the four is equally likely.
+const SHOUTS = 4;
 function deathShout(always = false) {
-  const roll = Math.floor(Math.random() * (always ? 2 : 3));
-  if (roll < 2) audio.shout(roll);
+  if (always || Math.random() < 1 / 3) audio.shout(Math.floor(Math.random() * SHOUTS));
 }
 
 // A dead defender drops its gun with whatever was left in the magazine.
