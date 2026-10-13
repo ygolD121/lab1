@@ -1,5 +1,14 @@
-// All sounds are synthesized with WebAudio — no audio files.
-let ctx = null, master = null, noise = null, volume = 0.7;
+// Sounds are synthesized with WebAudio, except the gunshot, which plays assets/gunshot.wav.
+let ctx = null, master = null, noise = null, volume = 0.7, shotSample = null;
+
+async function loadSample(url) {
+  try {
+    const data = await (await fetch(url)).arrayBuffer();
+    return await ctx.decodeAudioData(data);
+  } catch {
+    return null; // keep using the synthesized shot
+  }
+}
 
 function out(vol, pan = 0) {
   const g = ctx.createGain();
@@ -55,6 +64,7 @@ export const audio = {
     noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    loadSample('assets/gunshot.wav').then((b) => { shotSample = b; });
   },
   setVolume(v) {
     volume = v;
@@ -66,6 +76,21 @@ export const audio = {
   gunshot(vol = 1, pan = 0, distant = 0, { freq = 170, len = 0.16, gain = 0.9 } = {}) {
     if (!ctx) return;
     const t = ctx.currentTime, o = out(vol, pan);
+    if (shotSample) {
+      // Every gun shares the recorded shot; distance muffles it and adds a little echo.
+      const src = ctx.createBufferSource();
+      src.buffer = shotSample;
+      src.playbackRate.value = 0.96 + Math.random() * 0.08;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 18000 - distant * 16500;
+      const g = ctx.createGain();
+      g.gain.value = 1.6;
+      src.connect(f).connect(g).connect(o);
+      src.start(t);
+      if (distant > 0.3) noiseBurst(o, t + 0.08, 0.5, { from: 900, to: 120, gain: 0.25 });
+      return;
+    }
     noiseBurst(o, t, len + distant * 0.25, { from: 7000 - distant * 5000, to: 350, gain: 1 });
     noiseBurst(o, t, 0.05, { type: 'highpass', from: 3000, to: 2000, gain: 0.6 * (1 - distant) });
     tone(o, t, freq, len * 0.9, { to: freq * 0.26, gain });
