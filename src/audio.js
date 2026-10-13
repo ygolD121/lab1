@@ -64,7 +64,7 @@ export const audio = {
     noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    loadSample('assets/gunshot.wav').then((b) => { shotSample = b; });
+    loadSample('assets/gunshot.wav?v=2').then((b) => { shotSample = b; });
   },
   setVolume(v) {
     volume = v;
